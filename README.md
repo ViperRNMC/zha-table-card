@@ -160,7 +160,7 @@ columns:
       '<span style="display:inline-block; max-width: 180px; white-space: nowrap;
       overflow: hidden; text-overflow: ellipsis;" title="' + x + '">' + x +
       '</span>';
-```d
+```
 
 This card supports flexible column configuration, allowing both direct Zigbee attributes and custom formatting via modify.
 In addition to built-in attributes like rssi, lqi, device_type, or nwk, you can now reference any other entity using:
