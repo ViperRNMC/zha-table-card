@@ -860,4 +860,4 @@ class ZHANetworkCard extends HTMLElement {
   }
 }
 
-customElements.define("zha-network-card-ext", ZHANetworkCard);
+customElements.define("zha-table-ext", ZHANetworkCard);

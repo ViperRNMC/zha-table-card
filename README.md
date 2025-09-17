@@ -1,4 +1,4 @@
-# ZHA Table Card - Extended (`zha-table-card`)
+# ZHA Table Card
 
 This is an **extended version** of the excellent [`zha-network-card`](https://github.com/dmulcahey/zha-network-card) created by [@dmulcahey](https://github.com/dmulcahey), which allows you to **visualize and monitor your Zigbee devices** via ZHA (Zigbee Home Assistant integration).
 
@@ -24,11 +24,11 @@ Huge thanks to [@dmulcahey](https://github.com/dmulcahey) for the original card 
 
 ## 💾 Installation
 
-1. Save `zha-network-card-ext.js` into your `www/` folder.
+1. Save `zha-table-card.js` into your `www/` folder.
 2. Add it to your Lovelace resources:
 
 ```yaml
-- url: /local/zha-network-card-ext.js
+- url: /local/zha-table-card.js
   type: module
 ```
 
