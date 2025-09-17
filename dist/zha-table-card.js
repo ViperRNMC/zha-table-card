@@ -1,3 +1,9 @@
+console.info(
+  "%c ZHA Table Card %c 1.0.0 ",
+  "color: white; background: #03a9f4; font-weight: bold;",
+  "color: #03a9f4; background: white; font-weight: bold;"
+);
+
 /** some helper functions, mmmh, am I the only one needing those? Am I doing something wrong? */
 // typical [[1,2,3], [6,7,8]] to [[1, 6], [2, 7], [3, 8]] converter
 var transpose = (m) => m[0].map((x, i) => m.map((x) => x[i]));

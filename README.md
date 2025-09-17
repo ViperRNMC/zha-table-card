@@ -1,4 +1,4 @@
-# ZHA Network Card - Extended (`zha-network-card-ext`)
+# ZHA Table Card - Extended (`zha-table-card`)
 
 This is an **extended version** of the excellent [`zha-network-card`](https://github.com/dmulcahey/zha-network-card) created by [@dmulcahey](https://github.com/dmulcahey), which allows you to **visualize and monitor your Zigbee devices** via ZHA (Zigbee Home Assistant integration).
 
