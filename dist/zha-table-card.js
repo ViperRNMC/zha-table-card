@@ -4,6 +4,17 @@ console.info(
   "color: #03a9f4; background: white; font-weight: bold;"
 );
 
+// Single source-of-truth for preset columns used across form, mapping and defaults
+const PRESET_COLUMNS = [
+  { name: 'Name', prop: 'name' },
+  { name: 'Object ID', prop: 'object_id' },
+  { name: 'NWK', prop: 'nwk' },
+  { name: 'Available', prop: 'available', attr: 'available' },
+  { name: 'Power Source', prop: 'power_source', attr: 'power_source' },
+  { name: 'Model', prop: 'model' },
+  { name: 'User given name', prop: 'user_given_name' }
+];
+
 /** some helper functions, mmmh, am I the only one needing those? Am I doing something wrong? */
 // typical [[1,2,3], [6,7,8]] to [[1, 6], [2, 7], [3, 8]] converter
 var transpose = (m) => m[0].map((x, i) => m.map((x) => x[i]));
@@ -174,10 +185,10 @@ class DataRowZHA {
               const status = r.route_status || "";
 
               const match = all_rows.find((row) => {
-                  const nwk = row.device?.attributes?.nwk;
-                  const formatted = "0x" + nwk.toString(16).padStart(4, "0").toLowerCase();
-                  return formatted === hop;
-                });
+                const nwk = row.device?.attributes?.nwk;
+                const formatted = "0x" + nwk.toString(16).padStart(4, "0").toLowerCase();
+                return formatted === hop;
+              });
 
               const name =
                 match?.device?.attributes?.user_given_name ||
@@ -186,15 +197,11 @@ class DataRowZHA {
 
               return `${name} (${status})`;
             })
-            .filter((n) => n !== null)
+            .filter((n) => n)
             .sort((a, b) => a.localeCompare(b));
 
           return names.join(", ");
         }
-
-        return col.attr in this.device.attributes
-          ? this.device.attributes[col.attr]
-          : null;
       } else if ("prop" in col) {
         if (col.prop == "object_id") {
           return this.device.attributes.device_reg_id;
@@ -308,40 +315,66 @@ class ZHATableCard extends HTMLElement {
   }
 
   static getConfigForm() {
+    // Consolidated HA form: grouped fields for header, columns, visibility and features.
+    // Note: the built-in editor does not provide a true accordion/expandable API here; grouping helps
+    // visually and clarifies intent. For fully dynamic, runtime-populated column lists a custom
+    // config editor element is required.
+    const presetOptions = PRESET_COLUMNS.map(c => ({ value: c.prop, label: c.name }));
+
     return {
       schema: [
+        // Group header fields: title, icon, color, show_title, show_icon
         {
-          type: "grid",
-          name: "header_grid",
+          name: "content",
+          type: "expandable",
+          icon: "mdi:text-short",
           schema: [
-            { name: "title", required: false, selector: { text: {} } },
             {
-              name: "title_icon",
-              required: false,
-              selector: {
-                icon: {
-                  // placeholder: "mdi:table"
-                }
-              }
+              type: 'grid',
+              name: 'header_grid',
+              schema: [
+                { name: 'title', required: false, selector: { text: {} } },
+                { name: 'title_icon', required: false, selector: { icon: { placeholder: 'mdi:zigbee' } }},
+                { name: 'header_color', required: false, selector: { ui_color: { default_color: 'state', include_state: true } } },
+                { name: 'show_title', required: false, selector: { boolean: {} }, description: 'Show card title', default: true },
+                { name: 'show_icon', required: false, selector: { boolean: {} }, description: 'Show header icon', default: true }
+              ]
             },
+            // Group column configuration: full list of columns with reorder and visibility
             {
-              name: "color",
-              required: false,
-              selector: {
-                color: {
-                  placeholder: "#03a9f4"
-                }
-              }
-            }
+              name: 'visible_columns',
+              type: 'list',
+              schema: [
+                { name: 'name', required: true, selector: { text: {} }, description: 'Column header text' },
+                { name: 'prop', required: false, selector: { text: {} }, description: 'Property name (e.g. object_id, nwk, model)' },
+                { name: 'attr', required: false, selector: { text: {} }, description: 'Attribute name (optional)' },
+                { name: 'hidden', required: false, selector: { boolean: {} }, description: 'Hide this column' }
+              ],
+            },
+            // Quick multi-select of visible columns from a preset list; sets hidden=true on other columns
+            { name: 'columns', selector: { select: { multiple: true, options: presetOptions } } },
           ]
         },
-        { name: "show_title", required: false, selector: { boolean: {} }, description: "Show card title" },
-        { name: "show_icon", required: false, selector: { boolean: {} }, description: "Show card icon" },
-        { name: "columns", required: false, selector: { text: {} }, description: "Comma-separated column names or YAML for advanced columns" },
-        { name: "sorting_enabled", required: false, selector: { boolean: {} }, description: "Enable sorting" },
-        { name: "csv_enabled", required: false, selector: { boolean: {} }, description: "Enable CSV export" },
-        { name: "filters_enabled", required: false, selector: { boolean: {} }, description: "Show filters" },
-        { name: "search_enabled", required: false, selector: { boolean: {} }, description: "Show search" }
+        // Group interaction features: sorting, filtering, search, CSV export
+        {
+          name: "interactions",
+          type: "expandable",
+          icon: "mdi:gesture-tap",
+          schema: [
+            {
+              type: 'grid',
+              name: 'features_grid',
+              schema: [
+                { name: 'sorting', required: false, selector: { boolean: {} }, default: true },
+                { name: 'csv_export', required: false, selector: { boolean: {} }, default: true },
+                { name: 'filters', required: false, selector: { boolean: {} }, default: true },
+                { name: 'search', required: false, selector: { boolean: {} }, default: true }
+              ],
+              description: 'Feature toggles'
+            }
+          ]
+
+        }
       ]
     };
   }
@@ -350,6 +383,150 @@ class ZHATableCard extends HTMLElement {
     const root = this.shadowRoot;
     if (root && root.lastChild) root.removeChild(root.lastChild);
     const cfg = Object.assign({}, config);
+    // Support expandable-grouped editors: some frontends place grouped fields under
+    // `content` or `interactions` keys (when using a custom expandable UI). Merge
+    // those nested grids into the top-level config so the card reacts to changes.
+    try {
+      if (cfg.content && typeof cfg.content === 'object') {
+        const c = cfg.content;
+        if (c.header_grid && typeof c.header_grid === 'object') {
+          const hg = c.header_grid;
+          if (hg.title !== undefined) cfg.title = hg.title;
+          if (hg.title_icon !== undefined) cfg.title_icon = hg.title_icon;
+          if (hg.color !== undefined) cfg.color = hg.color;
+          if (hg.show_title !== undefined) cfg.show_title = hg.show_title;
+          if (hg.show_icon !== undefined) cfg.show_icon = hg.show_icon;
+        }
+      }
+      if (cfg.interactions && typeof cfg.interactions === 'object') {
+        const it = cfg.interactions;
+        if (it.features_grid && typeof it.features_grid === 'object') {
+          const fg = it.features_grid;
+          if (fg.sorting !== undefined) cfg.sorting = fg.sorting;
+          if (fg.csv_export !== undefined) cfg.csv_export = fg.csv_export;
+          if (fg.filters !== undefined) cfg.filters = fg.filters;
+          if (fg.search !== undefined) cfg.search = fg.search;
+        }
+      }
+    } catch (e) {
+      // defensive: if something unexpected is present, don't block setConfig
+      console.warn('Failed to merge expandable groups into config', e);
+    }
+    // Support nested header_grid (from the editor/grid) by merging into top-level keys.
+    // Some frontends may return grouped fields either directly under `header_grid`
+    // or nested inside an `content.header_grid` (when using an expandable group).
+    if (cfg && typeof cfg === 'object') {
+      try {
+        const maybeHG = cfg.header_grid || (cfg.content && cfg.content.header_grid);
+        if (maybeHG && typeof maybeHG === 'object') {
+          const hg = maybeHG;
+          if (hg.title !== undefined) cfg.title = hg.title;
+          if (hg.title_icon !== undefined) cfg.title_icon = hg.title_icon;
+          if (hg.header_color !== undefined) cfg.color = hg.header_color; // named header_color in form
+          if (hg.color !== undefined) cfg.color = hg.color; // older shape
+          if (hg.show_title !== undefined) cfg.show_title = hg.show_title;
+          if (hg.show_icon !== undefined) cfg.show_icon = hg.show_icon;
+        }
+
+        const presetMap = PRESET_COLUMNS.reduce((acc, c) => { acc[c.prop] = c.name; return acc; }, {});
+        // If editor nests columns under cfg.content.columns (expandable group), merge them up
+        if (cfg.content && Array.isArray(cfg.content.columns)) {
+          // Convert string values (from multi-select) into proper column objects
+          cfg.columns = cfg.content.columns.map((c) => {
+            if (typeof c === 'string') {
+              return { prop: c, name: presetMap[c] || c };
+            }
+            if (c && typeof c === 'object') {
+              return Object.assign({}, c);
+            }
+            return { prop: String(c), name: String(c) };
+          });
+        }
+
+        // If editor provided visible_columns as a list (either top-level or under content),
+        // make that list the source of truth for ordering and visibility.
+        const providedVisible = Array.isArray(cfg.visible_columns)
+          ? cfg.visible_columns
+          : Array.isArray(cfg.content && cfg.content.visible_columns)
+          ? cfg.content.visible_columns
+          : null;
+
+        if (Array.isArray(providedVisible)) {
+          const visibleKeys = providedVisible.map((item) => {
+            if (typeof item === 'string') return item;
+            if (item && typeof item === 'object') return item.prop || item.attr || item.name || JSON.stringify(item);
+            return String(item);
+          }).map(String);
+
+          // Ensure we have columns to reorder; if not, seed from presets
+          if (!Array.isArray(cfg.columns) || !cfg.columns.length) {
+            cfg.columns = PRESET_COLUMNS.map(c => Object.assign({}, c));
+          }
+
+          // Build a map of existing columns by key (prop/attr/name)
+          const colMap = new Map();
+          cfg.columns.forEach((col) => {
+            const key = String(col.prop || col.attr || col.name || JSON.stringify(col));
+            colMap.set(key, Object.assign({}, col));
+          });
+
+          const ordered = [];
+          // Add visible columns in requested order (use presetMap name when name missing)
+          visibleKeys.forEach((k) => {
+            if (colMap.has(k)) {
+              const c = colMap.get(k);
+              c.hidden = false;
+              ordered.push(c);
+              colMap.delete(k);
+            } else {
+              // create a minimal column object if missing
+              ordered.push({ prop: k, name: presetMap[k] || k, hidden: false });
+            }
+          });
+
+          // Append remaining columns (preserve existing order), mark them hidden
+          for (const [key, col] of colMap.entries()) {
+            col.hidden = true;
+            ordered.push(col);
+          }
+
+          cfg.columns = ordered;
+          cfg.visible_columns = visibleKeys; // keep a flat visible array for backward compat
+        }
+      } catch (e) {
+        // defensive: if something unexpected is present, don't block setConfig
+        console.warn('Failed to merge nested editor groups into config', e);
+      }
+    }
+    
+    // sensible defaults when not provided
+    if (cfg.title === undefined) cfg.title = "Table";
+    if (cfg.title_icon === undefined) cfg.title_icon = "mdi:zigbee";
+    if (cfg.filters === undefined) cfg.filters = true;
+    if (cfg.search === undefined) cfg.search = true;
+    if (cfg.csv_export === undefined) cfg.csv_export = true;
+
+
+    // Normalize color object returned by ui_color selector (some frontends return an object)
+    if (cfg.color && typeof cfg.color === 'object') {
+      // Common shapes: { color: '#rrggbb' } or { value: '#rrggbb' } or theme-value strings
+      if (typeof cfg.color.color === 'string' && cfg.color.color) {
+        cfg.color = cfg.color.color;
+      } else if (typeof cfg.color.value === 'string' && cfg.color.value) {
+        cfg.color = cfg.color.value;
+      } else if (typeof cfg.color.theme === 'string' && cfg.color.theme) {
+        cfg.color = cfg.color.theme;
+      } else {
+        // fallback: try to stringify sensible fields, otherwise leave as-is
+        try {
+          if (cfg.color.css && typeof cfg.color.css === 'string') cfg.color = cfg.color.css;
+          else if (cfg.color.var && typeof cfg.color.var === 'string') cfg.color = cfg.color.var;
+          else cfg.color = JSON.stringify(cfg.color);
+        } catch (e) {
+          cfg.color = String(cfg.color);
+        }
+      }
+    }
       const card = document.createElement("ha-card");
       // Show icon and/or title based on config
       let showTitle = cfg.show_title !== false;
@@ -394,7 +571,7 @@ class ZHATableCard extends HTMLElement {
       // Build the full card HTML: filters and table
       const wrapper = document.createElement("div");
       let filtersHtml = '';
-      if (cfg.filters_enabled !== false) {
+      if (cfg.filters !== false) {
         filtersHtml += `
           <div id="filters" style="padding: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
             <label>
@@ -417,17 +594,22 @@ class ZHATableCard extends HTMLElement {
                 <option value="false">Offline</option>
               </select>
             </label>
+            <!-- Clear Filters button placed next to the filter controls -->
+            <div style="display:flex; align-items:center;">
+              <button id="clear-filters" type="button" style="margin-left:8px">Clear Filters</button>
+            </div>
           </div>
         `;
       }
       let searchHtml = '';
-      if (cfg.search_enabled !== false) {
+      if (cfg.search !== false) {
         searchHtml += `
           <div id="search" style="padding: 10px; display: flex; align-items: center; gap: 8px;">
             <label style="flex: 1;">Name
               <div class="name-wrapper" style="display: flex; position: relative;">
                 <input id="filter-name" type="text" placeholder="Search by name..." style="width: 100%;" />
-                <button id="clear-name" type="button" style="display:none">Clear</button>
+                <!-- Visible clear button for search (handler exists below) -->
+                <button id="clear-name" type="button">Clear</button>
               </div>
             </label>
           </div>
@@ -439,8 +621,7 @@ class ZHATableCard extends HTMLElement {
         ${searchHtml}
         <div style="text-align: left; padding: 0 10px 10px;">
           <div style="display: flex; gap: 10px;">
-            ${(cfg.filters_enabled !== false || cfg.search_enabled !== false) ? '<button id="clear-filters">Clear Filters</button>' : ''}
-            ${cfg.csv_enabled === false ? '' : '<button id="export-csv">Export to CSV</button>'}
+            ${cfg.csv_export === false ? '' : '<button id="export-csv">Export to CSV</button>'}
           </div>
         </div>
 
@@ -457,6 +638,8 @@ class ZHATableCard extends HTMLElement {
       if (cfg.color) {
         if (cfg.color === 'Accent color') headerColor = 'var(--accent-color, var(--primary-color))';
         else if (cfg.color === 'Primary color' || cfg.color === 'State color (default)') headerColor = 'var(--primary-color)';
+        else if (cfg.color === 'Background color') headerColor = 'var(--primary-background-color, var(--paper-card-background-color))';
+        else if (cfg.color === 'Primary text color') headerColor = 'var(--primary-text-color, var(--text-primary-color))';
         else if (cfg.color === 'None') headerColor = 'transparent';
         else if (/^#([0-9A-Fa-f]{3}){1,2}$/.test(cfg.color)) headerColor = cfg.color;
         else headerColor = cfg.color; // fallback: maybe a css variable name
@@ -504,7 +687,7 @@ class ZHATableCard extends HTMLElement {
         }
       });
       // restore name filter only if search is enabled and saved
-      if (cfg.search_enabled !== false && saved.name) {
+      if (cfg.search !== false && saved.name) {
         const nameEl = this.shadowRoot.getElementById('filter-name');
         if (nameEl) nameEl.value = saved.name;
       }
@@ -515,7 +698,7 @@ class ZHATableCard extends HTMLElement {
         header.onclick = () => {
           try {
             // respect global sorting enabled flag
-            if (cfg.sorting_enabled === false) return;
+            if (cfg.sorting === false) return;
 
             const origIdx = parseInt(header.dataset.idx);
             if (Number.isNaN(origIdx)) return;
@@ -587,8 +770,8 @@ class ZHATableCard extends HTMLElement {
   }
 
     applySorting(rows) {
-      // Respect global sorting_enabled flag on the card
-      if (this._config && this._config.sorting_enabled === false) return rows;
+      // Respect global sorting flag on the card
+      if (this._config && this._config.sorting === false) return rows;
 
       const sort_col = this.tbl.sort_by;
       if (!sort_col) return rows;
@@ -807,17 +990,20 @@ class ZHATableCard extends HTMLElement {
         this.applyFilters();
         
         // Clear Filters button handler
+        // NOTE: this should clear the select-type filters but keep the text search intact
         const clearButton = root.getElementById("clear-filters");
         if (clearButton) {
           clearButton.addEventListener("click", () => {
-            ["filter-area", "filter-model", "filter-type", "filter-online", "filter-name"].forEach((id) => {
+            // clear only the dropdown/select filters; keep the search input (filter-name) as-is
+            ["filter-area", "filter-model", "filter-type", "filter-online"].forEach((id) => {
               const el = root.getElementById(id);
               if (el) {
                 el.value = "";
                 el.classList.remove("filter-active");
               }
             });
-            sessionStorage.removeItem("zha_card_filters");
+            // Persist the updated filters (preserving any search text) instead of removing saved state
+            this._saveFilterState();
             this.applyFilters();
           });
         }
@@ -840,7 +1026,7 @@ class ZHATableCard extends HTMLElement {
         const exportBtn = root.getElementById("export-csv");
         if (exportBtn) {
           exportBtn.onclick = () => {
-            if (cfg.csv_enabled === false) return;
+            if (cfg.csv_export === false) return;
             const rows = this.tbl.get_rows();
             if (!rows.length) return;
 
