@@ -10,8 +10,7 @@ var transpose = (m) => m[0].map((x, i) => m.map((x) => x[i]));
 
 // single items -> Array with item with length == 1
 var listify = (obj) => (obj instanceof Array ? obj : [obj]);
-
-// omg, js is still very broken, trouble comparing strings? 80s? plain-C? wtf!
+    
 var compare = function (a, b) {
   const aNum = parseFloat(a);
   const bNum = parseFloat(b);
@@ -22,11 +21,10 @@ var compare = function (a, b) {
   if (aIsNum && bIsNum) {
     return aNum - bNum;
   } else if (aIsNum) {
-    return -1; // números vêm antes
+    return -1;
   } else if (bIsNum) {
     return 1;
   } else {
-    // fallback para strings, se ambos não forem números
     return String(a).localeCompare(String(b));
   }
 };
@@ -34,22 +32,24 @@ var compare = function (a, b) {
 class DataTableZHA {
   constructor(cfg) {
     this.cfg = cfg;
-    this.cols = cfg.columns;
-    this.sort_by = cfg.sort_by;
 
-    if (this.sort_by && !["+", "-"].includes(this.sort_by.slice(-1))) {
-      this.sort_by += "+";
-    }
+    // Zorg dat er altijd een array is
+    const userColumns = Array.isArray(cfg.columns) && cfg.columns.length
+          ? cfg.columns.map(col => ({ ...col, hidden: col.hidden ?? false }))
+      : [{ name: "Name", prop: "name" }];
+    cfg.columns = userColumns;
 
-    this.col_ids = this.cols.map(
-      (col) => col.prop || col.attr || col.attr_as_list
-    );
+    this.cols = userColumns;
+
+    this.col_ids = this.cols.map(col => col.prop || col.attr || col.attr_as_list);
 
     this.headers = this.cols
-      .filter((col) => !col.hidden)
+      .filter(col => !col.hidden)
       .map((col, idx) => col.name || this.col_ids[idx]);
 
     this.rows = [];
+
+    this.sort_by = "available-"; // standaard sorteren: unavailable eerst
   }
 
   add(...rows) {
@@ -61,65 +61,60 @@ class DataTableZHA {
   }
 
   get_rows() {
-      // sorting is allowed asc/desc for one column
-      if (this.sort_by) {
-        let sort_col = this.sort_by;
-        let sort_dir = 1;
-    
-        if (sort_col) {
-          if (["-", "+"].includes(sort_col.slice(-1))) {
-            sort_dir = sort_col.slice(-1) == "-" ? -1 : +1;
-            sort_col = sort_col.slice(0, -1);
-          }
+    if (this.sort_by) {
+      let sort_col = this.sort_by;
+      let sort_dir = 1;
+
+      if (sort_col) {
+        if (["-", "+"].includes(sort_col.slice(-1))) {
+          sort_dir = sort_col.slice(-1) == "-" ? -1 : +1;
+          sort_col = sort_col.slice(0, -1);
         }
-    
-        // determine col-by-idx to be sorted with...
-        var sort_idx = this.cols.findIndex((col) =>
-          ["id", "attr", "prop", "attr_as_list"].some(
-            (attr) => attr in col && sort_col == col[attr]
-          )
-        );
-    
-        // if applicable sort according to config
-        if (sort_idx > -1) {
-          // Verifica se todos os valores da coluna são numéricos
-          const isNumeric = this.rows.every(row => {
-              const val = row.data[sort_idx]?.content_num;
-              return val !== undefined && typeof val === "number" && !Number.isNaN(val);
-          });
-    
-          this.rows.sort(
-              (x, y) =>
-                sort_dir *
-                compare(
-                  isNumeric
-                    ? x.data[sort_idx]?.content_num
-                    : x.data[sort_idx]?.content,
-                  isNumeric
-                    ? y.data[sort_idx]?.content_num
-                    : y.data[sort_idx]?.content
-                )
-            );
-        } else {
-          console.error(
-            `config.sort_by: ${this.cfg.sort_by}, but column not found!`
+      }
+
+      var sort_idx = this.cols.findIndex((col) =>
+        ["id", "attr", "prop", "attr_as_list"].some(
+          (attr) => attr in col && sort_col == col[attr]
+        )
+      );
+
+      if (sort_idx > -1) {
+        const isNumeric = this.rows.every(row => {
+            const val = row.data[sort_idx]?.content_num;
+            return val !== undefined && typeof val === "number" && !Number.isNaN(val);
+        });
+
+        this.rows.sort(
+            (x, y) =>
+              sort_dir *
+              compare(
+                isNumeric
+                  ? x.data[sort_idx]?.content_num
+                  : x.data[sort_idx]?.content,
+                isNumeric
+                  ? y.data[sort_idx]?.content_num
+                  : y.data[sort_idx]?.content
+              )
           );
-        }
+      } else {
+        console.error(
+          `config.sort_by: ${this.cfg.sort_by}, but column not found!`
+        );
       }
-    
-      // mark rows to be hidden due to 'strict' property
-      this.rows = this.rows.filter((row) => !row.hidden);
-    
-      // truncate shown rows to 'max rows', if configured
-      if ("max_rows" in this.cfg && this.cfg.max_rows > -1) {
-        this.rows = this.rows.slice(0, this.cfg.max_rows);
-      }
-    
-      return this.rows;
     }
+
+    this.rows = this.rows.filter((row) => !row.hidden);
+
+    if ("max_rows" in this.cfg && this.cfg.max_rows > -1) {
+      this.rows = this.rows.slice(0, this.cfg.max_rows);
+    }
+
+    return this.rows;
+  }
 
   updateSortBy(idx) {
     let new_sort = this.cols[idx].attr || this.cols[idx].prop;
+    if (idx === 0) return; // niet sorteren op Available
     if (this.sort_by && new_sort === this.sort_by.slice(0, -1)) {
       this.sort_by = new_sort + (this.sort_by.slice(-1) === "-" ? "+" : "-");
     } else {
@@ -128,7 +123,6 @@ class DataTableZHA {
   }
 }
 
-/** One level down, data representation for each row (including all cells) */
 class DataRowZHA {
   constructor(device, strict, raw_data = null) {
     this.device = device;
@@ -140,175 +134,246 @@ class DataRowZHA {
   }
 
   get_raw_data(col_cfgs, all_rows = []) {
-      this.raw_data = col_cfgs.map((col) => {
-        if ("attr" in col) {
-          
-          if (col.attr === "parent_name") {
-            const neighbors = this.device.attributes.neighbors || [];
-            const parent_ieee = neighbors.find((n) => n.relationship === "Parent")?.ieee;
-            if (!parent_ieee) return "-";
-    
-            for (const row of all_rows) {
-              const dev = row.device?.attributes;
-              if (dev?.ieee === parent_ieee) {
-                return dev.user_given_name || dev.name || parent_ieee;
-              }
+    this.raw_data = col_cfgs.map((col) => {
+      if ("attr" in col) {
+        
+        if (col.attr === "parent_name") {
+          const neighbors = this.device.attributes.neighbors || [];
+          const parent_ieee = neighbors.find((n) => n.relationship === "Parent")?.ieee;
+          if (!parent_ieee) return "-";
+
+          for (const row of all_rows) {
+            const dev = row.device?.attributes;
+            if (dev?.ieee === parent_ieee) {
+              return dev.user_given_name || dev.name || parent_ieee;
             }
-    
-            return parent_ieee; // fallback
           }
-          
-          if (col.attr === "neighbors_names") {
-              const neighbors = this.device.attributes.neighbors || [];
-              const names = neighbors.map((n) => {
-                  const match = all_rows.find((row) => row.device?.attributes?.ieee === n.ieee);
-                  return match?.device?.attributes?.user_given_name || match?.device?.attributes?.name || n.ieee;
-                }).sort((a, b) => a.localeCompare(b));
-            
-              return names.join(", ");
-          }
-          
-          if (col.attr === "routes_names") {
-              const routes = this.device.attributes.routes || [];
-            
-              const hop_set = new Set();
-            
-              const names = routes
-                .map((r) => {
-                  const hop = r.next_hop?.toLowerCase();
-                  if (!hop || hop === "0xfffe" || hop_set.has(hop)) return null;
-                  hop_set.add(hop);
-            
-                  const status = r.route_status || "";
-            
-                  const match = all_rows.find((row) => {
-                      const nwk = row.device?.attributes?.nwk;
-                      const formatted = "0x" + nwk.toString(16).padStart(4, "0").toLowerCase();
-                      return formatted === hop;
-                    });
-            
-                  const name =
-                    match?.device?.attributes?.user_given_name ||
-                    match?.device?.attributes?.name ||
-                    hop;
-            
-                  return `${name} (${status})`;
-                })
-                .filter((n) => n !== null)
-                .sort((a, b) => a.localeCompare(b));
-            
-              return names.join(", ");
-            }
-    
-          return col.attr in this.device.attributes
-            ? this.device.attributes[col.attr]
-            : null;
+
+          return parent_ieee;
         }
-    
-        else if ("prop" in col) {
-          if (col.prop == "object_id") {
-            return this.device.attributes.device_reg_id;
-          } else if (col.prop == "name") {
-            if (
-              "user_given_name" in this.device.attributes &&
-              this.device.attributes["user_given_name"]
-            ) {
-              return this.device.attributes["user_given_name"];
-            } else {
-              return this.device.attributes.name;
-            }
-          } else if (col.prop == "nwk") {
-            let hex = this.device.attributes["nwk"];
-            if (typeof hex === "string") {
-              hex = parseInt(hex, 16);
-            }
-            return "0x" + hex.toString(16).padStart(4, "0");
+
+        if (col.attr === "neighbors_names") {
+          const neighbors = this.device.attributes.neighbors || [];
+          const names = neighbors.map((n) => {
+              const match = all_rows.find((row) => row.device?.attributes?.ieee === n.ieee);
+              return match?.device?.attributes?.user_given_name || match?.device?.attributes?.name || n.ieee;
+            }).sort((a, b) => a.localeCompare(b));
+          
+          return names.join(", ");
+        }
+
+        if (col.attr === "routes_names") {
+          const routes = this.device.attributes.routes || [];
+          const hop_set = new Set();
+          const names = routes
+            .map((r) => {
+              const hop = r.next_hop?.toLowerCase();
+              if (!hop || hop === "0xfffe" || hop_set.has(hop)) return null;
+              hop_set.add(hop);
+
+              const status = r.route_status || "";
+
+              const match = all_rows.find((row) => {
+                  const nwk = row.device?.attributes?.nwk;
+                  const formatted = "0x" + nwk.toString(16).padStart(4, "0").toLowerCase();
+                  return formatted === hop;
+                });
+
+              const name =
+                match?.device?.attributes?.user_given_name ||
+                match?.device?.attributes?.name ||
+                hop;
+
+              return `${name} (${status})`;
+            })
+            .filter((n) => n !== null)
+            .sort((a, b) => a.localeCompare(b));
+
+          return names.join(", ");
+        }
+
+        return col.attr in this.device.attributes
+          ? this.device.attributes[col.attr]
+          : null;
+      } else if ("prop" in col) {
+        if (col.prop == "object_id") {
+          return this.device.attributes.device_reg_id;
+        } else if (col.prop == "name") {
+          if (
+            "user_given_name" in this.device.attributes &&
+            this.device.attributes["user_given_name"]
+          ) {
+            return this.device.attributes["user_given_name"];
           } else {
-            return col.prop in this.device ? this.device[col.prop] : null;
+            return this.device.attributes.name;
           }
-        } else if ("attr_as_list" in col) {
-          this.has_multiple = true;
-          return this.device.attributes[col.attr_as_list];
+        } else if (col.prop == "nwk") {
+          let hex = this.device.attributes["nwk"];
+          if (typeof hex === "string") {
+            hex = parseInt(hex, 16);
+          }
+          return "0x" + hex.toString(16).padStart(4, "0");
         } else {
-          console.error(`no selector found for col: ${col.name} - skipping...`);
+          return col.prop in this.device ? this.device[col.prop] : null;
         }
-    
+      } else if ("attr_as_list" in col) {
+        this.has_multiple = true;
+        return this.device.attributes[col.attr_as_list];
+      } else {
+        console.error(`no selector found for col: ${col.name} - skipping...`);
         return null;
-      });
-    }
+      }
+    });
+  }
 
   render_data(col_cfgs) {
-      // apply passed "modify" configuration setting by using eval()
-      // assuming the data is available inside the function as "x"
-      const hass = window._zha_card_hass || null;
-      
-      let base_entity_id = "";
-      const entities = this.device.attributes.entities || [];
-      for (const e of entities) {
-        if (typeof e === "string" && e.endsWith("_lqi")) {
-          base_entity_id = e.replace(/_lqi$/, "");
-          break;
-        } else if (typeof e === "object" && e.entity_id?.endsWith("_lqi")) {
-          base_entity_id = e.entity_id.replace(/_lqi$/, "");
-          break;
-        }
+    const hass = window._zha_card_hass || null;
+    let base_entity_id = "";
+    const entities = this.device.attributes.entities || [];
+    for (const e of entities) {
+      if (typeof e === "string" && e.endsWith("_lqi")) {
+        base_entity_id = e.replace(/_lqi$/, "");
+        break;
+      } else if (typeof e === "object" && e.entity_id?.endsWith("_lqi")) {
+        base_entity_id = e.entity_id.replace(/_lqi$/, "");
+        break;
       }
-    
-      this.data = this.raw_data.map((raw, idx) => {
-        // finally, put it all together
-        let x = raw;
-        let cfg = col_cfgs[idx];
-    
-        let content = cfg.modify ? eval(cfg.modify) : x ?? "N/A";
-    
-        // Tries to extract numerical valur for sorting (even if in HTML)
-        let numeric = undefined;
-        if (cfg.numeric === true) {
-          if (cfg.attr === "last_seen" && typeof x === "string") {
-            const ts = Date.parse(x);
-            numeric = isNaN(ts) ? -Infinity : ts;
-          } else {
-            numeric = parseFloat(x);
-            if (Number.isNaN(numeric)) {
-              const match = typeof content === "string" ? content.match(/[-]?\d+(\.\d+)?/) : null;
-              numeric = match ? parseFloat(match[0]) : -Infinity;
+    }
+
+    this.data = this.raw_data.map((raw, idx) => {
+      let x = raw;
+      let cfg = col_cfgs[idx];
+      let content;
+
+      // Custom rendering for Available and Power Source
+      if (cfg.attr === "available") {
+        let available = x;
+        let icon = available ? "mdi:check-circle" : "mdi:close-circle";
+        let color = available ? "#21c960" : "#fa4444";
+        content = `<ha-icon icon="${icon}" style="color:${color};vertical-align:middle"></ha-icon>`;
+
+      } else if (cfg && cfg.attr === "power_source") {
+        let powerSource = (typeof x === "string" ? x.toLowerCase() : x);
+        let battery = this.device.attributes.battery || this.device.attributes.battery_level;
+        if (powerSource && powerSource.includes("mains")) {
+            content = `<ha-icon icon="mdi:power-plug" style="color:#1976d2;vertical-align:middle"></ha-icon>`;
+        } else if (powerSource && powerSource.includes("battery")) {
+            content = `<ha-icon icon="mdi:battery" style="color:#faad14;vertical-align:middle"></ha-icon>`;
+            if (battery !== undefined && battery !== null && battery !== "") {
+                content += ` ${battery}%`;
             }
+        } else {
+            content = x ?? "N/A";
+        }
+
+      } else {
+        content = cfg.modify ? eval(cfg.modify) : x ?? "N/A";
+      }
+
+      let numeric = undefined;
+      if (cfg.numeric === true) {
+        if (cfg.attr === "last_seen" && typeof x === "string") {
+          const ts = Date.parse(x);
+          numeric = isNaN(ts) ? -Infinity : ts;
+        } else {
+          numeric = parseFloat(x);
+          if (Number.isNaN(numeric)) {
+            const match = typeof content === "string" ? content.match(/[-]?\d+(\.\d+)?/) : null;
+            numeric = match ? parseFloat(match[0]) : -Infinity;
           }
         }
-    
-        return {
-          content: content,
-          content_num: numeric,
-          pre: cfg.prefix || "",
-          suf: cfg.suffix || "",
-          css: cfg.align || "left",
-          hide: cfg.hidden,
-        };
-      });
-    
-      this.hidden = this.data.some((data) => data === null);
-      return this;
-    }
-}
+      }
 
-/** The HTMLElement, which is used as a base for the Lovelace custom card */
-class ZHANetworkCard extends HTMLElement {
+      return {
+        content: content,
+        content_num: numeric,
+        pre: cfg.prefix || "",
+        suf: cfg.suffix || "",
+        css: cfg.align || "left",
+        hide: cfg.hidden,
+      };
+    });
+
+    this.hidden = this.data.some((data) => data === null);
+    return this;
+  }
+}
+    
+class ZHATableCard extends HTMLElement {
   constructor() {
     super();
-    this.attachShadow({
-      mode: "open",
-    });
+    this.attachShadow({ mode: 'open' });
     this.card_height = 1;
     this.tbl = null;
   }
 
+  static getConfigForm() {
+    return {
+      schema: [
+        {
+          type: "grid",
+          name: "header_grid",
+          schema: [
+            { name: "title", required: false, selector: { text: {} } },
+            {
+              name: "title_icon",
+              required: false,
+              selector: {
+                icon: {
+                  // placeholder: "mdi:table"
+                }
+              }
+            },
+            {
+              name: "color",
+              required: false,
+              selector: {
+                color: {
+                  placeholder: "#03a9f4"
+                }
+              }
+            }
+          ]
+        },
+        { name: "show_title", required: false, selector: { boolean: {} }, description: "Show card title" },
+        { name: "show_icon", required: false, selector: { boolean: {} }, description: "Show card icon" },
+        { name: "columns", required: false, selector: { text: {} }, description: "Comma-separated column names or YAML for advanced columns" },
+        { name: "sorting_enabled", required: false, selector: { boolean: {} }, description: "Enable sorting" },
+        { name: "csv_enabled", required: false, selector: { boolean: {} }, description: "Enable CSV export" },
+        { name: "filters_enabled", required: false, selector: { boolean: {} }, description: "Show filters" },
+        { name: "search_enabled", required: false, selector: { boolean: {} }, description: "Show search" }
+      ]
+    };
+  }
+
   setConfig(config) {
-      const root = this.shadowRoot;
-      if (root.lastChild) root.removeChild(root.lastChild);
-    
-      const cfg = Object.assign({}, config);
+    const root = this.shadowRoot;
+    if (root && root.lastChild) root.removeChild(root.lastChild);
+    const cfg = Object.assign({}, config);
       const card = document.createElement("ha-card");
-      card.header = cfg.title;
+      // Show icon and/or title based on config
+      let showTitle = cfg.show_title !== false;
+      let showIcon = cfg.show_icon !== false;
+      if (showTitle || showIcon) {
+        const headerDiv = document.createElement('div');
+        headerDiv.style.display = 'flex';
+        headerDiv.style.alignItems = 'center';
+        if (showIcon && cfg.title_icon) {
+          const iconEl = document.createElement('ha-icon');
+          iconEl.setAttribute('icon', cfg.title_icon);
+          iconEl.style.verticalAlign = 'middle';
+          iconEl.style.marginRight = showTitle ? '6px' : '0';
+          headerDiv.appendChild(iconEl);
+        }
+        if (showTitle) {
+          const span = document.createElement('span');
+          span.innerText = cfg.title || '';
+          headerDiv.appendChild(span);
+        }
+        card.header = headerDiv;
+      } else {
+        card.header = '';
+      }
       this.tbl = new DataTableZHA(cfg);
     
       // Load previous filters and sorting from sessionStorage
@@ -317,16 +382,21 @@ class ZHANetworkCard extends HTMLElement {
         this.tbl.sort_by = saved.sort_by;
       }
     
-      // Generate table headers
-      const headersHtml = this.tbl.headers.map(
-        (name, idx) =>
-          `<th class="${cfg.columns[idx].align || "left"}" id="${name}">${name}</th>`
-      ).join("");
+      // Generate table headers from visible columns and keep original indices
+      const visibleCols = this.tbl.cols.map((col, idx) => ({ col, idx })).filter(({ col }) => !col.hidden);
+      const headersHtml = visibleCols
+        .map(({ col, idx }) => {
+          const id = (col.name || col.prop || col.attr || `col${idx}`).replace(/\s+/g, '_');
+          return `<th class="${col.align || 'left'}" data-idx="${idx}" id="${id}">${col.name || col.prop || col.attr || `col${idx}`}</th>`;
+        })
+        .join("");
     
       // Build the full card HTML: filters and table
       const wrapper = document.createElement("div");
-      wrapper.innerHTML = `
-          <div id="filters" style="padding: 10px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+      let filtersHtml = '';
+      if (cfg.filters_enabled !== false) {
+        filtersHtml += `
+          <div id="filters" style="padding: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
             <label>
               <span class="label-text">Area</span>
               <select id="filter-area"><option value="">All</option></select>
@@ -347,29 +417,51 @@ class ZHANetworkCard extends HTMLElement {
                 <option value="false">Offline</option>
               </select>
             </label>
-          <label style="flex: 1;">Name
+          </div>
+        `;
+      }
+      let searchHtml = '';
+      if (cfg.search_enabled !== false) {
+        searchHtml += `
+          <div id="search" style="padding: 10px; display: flex; align-items: center; gap: 8px;">
+            <label style="flex: 1;">Name
               <div class="name-wrapper" style="display: flex; position: relative;">
                 <input id="filter-name" type="text" placeholder="Search by name..." style="width: 100%;" />
-                <button id="clear-name" type="button">×</button>
+                <button id="clear-name" type="button" style="display:none">Clear</button>
               </div>
             </label>
           </div>
-        
-          <div style="text-align: left; padding: 0 10px 10px;">
-            <div style="display: flex; gap: 10px;">
-              <button id="clear-filters">Clear Filters</button>
-              <button id="export-csv">Export to CSV</button>
-            </div>
-          </div>
-        
-          <div id="table-wrapper" style="overflow-x:auto;">
-            <table>
-              <thead><tr>${headersHtml}</tr></thead>
-              <tbody id="zhatable"></tbody>
-            </table>
-          </div>
         `;
+      }
+
+      wrapper.innerHTML = `
+        ${filtersHtml}
+        ${searchHtml}
+        <div style="text-align: left; padding: 0 10px 10px;">
+          <div style="display: flex; gap: 10px;">
+            ${(cfg.filters_enabled !== false || cfg.search_enabled !== false) ? '<button id="clear-filters">Clear Filters</button>' : ''}
+            ${cfg.csv_enabled === false ? '' : '<button id="export-csv">Export to CSV</button>'}
+          </div>
+        </div>
+
+        <div id="table-wrapper" style="overflow-x:auto;">
+          <table>
+            <thead><tr>${headersHtml}</tr></thead>
+            <tbody id="zhatable"></tbody>
+          </table>
+        </div>
+      `;
     
+      // determine header color based on config
+      let headerColor = '#03a9f4';
+      if (cfg.color) {
+        if (cfg.color === 'Accent color') headerColor = 'var(--accent-color, var(--primary-color))';
+        else if (cfg.color === 'Primary color' || cfg.color === 'State color (default)') headerColor = 'var(--primary-color)';
+        else if (cfg.color === 'None') headerColor = 'transparent';
+        else if (/^#([0-9A-Fa-f]{3}){1,2}$/.test(cfg.color)) headerColor = cfg.color;
+        else headerColor = cfg.color; // fallback: maybe a css variable name
+      }
+
       // Card style
       const style = document.createElement("style");
       style.textContent = `
@@ -379,7 +471,7 @@ class ZHANetworkCard extends HTMLElement {
           tr td.left, th.left { text-align: left; }
           tr td.center, th.center { text-align: center; }
           tr td.right, th.right { text-align: right; }
-          th { background-color: #03a9f4; color: white; }
+          th { background-color: ${headerColor}; color: white; }
           .headerSortDown:after,
           .headerSortUp:after {
             content: ' ';
@@ -393,114 +485,8 @@ class ZHANetworkCard extends HTMLElement {
           .headerSortUp { padding-right: 10px; }
           tbody tr:nth-child(odd) { background-color: var(--paper-card-background-color); }
           tbody tr:nth-child(even) { background-color: var(--secondary-background-color); }
-        
-          #filters {
-            padding: 10px;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            align-items: flex-end;
-          }
-        
-          #filters label {
-            display: flex;
-            flex-direction: column;
-            font-size: 12px;
-            min-width: 140px;
-          }
-          .label-text {
-              margin-left: 4px;
-            }
-        
-          #filters select,
-          #filters input[type="text"],
-          #filters button {
-            font-size: 14px;
-            height: 30px;
-            padding: 4px 8px;
-            border: 1px solid var(--divider-color);
-            border-radius: 4px;
-            background-color: var(--card-background-color);
-            color: var(--primary-text-color);
-            box-sizing: border-box;
-            background-color: transparent;
-          }
-        
-          #filters select.filter-active,
-          #filters input.filter-active {
-            border: 2px solid var(--primary-color);
-            background-color: #f0f8ff;
-          }
-        
-          select {
-            appearance: auto;
-            -webkit-appearance: auto;
-            -moz-appearance: auto;
-          }
-        
-          .name-wrapper {
-            display: flex;
-            position: relative;
-            width: 100%;
-          }
-        
-          #filter-name {
-            width: 100%;
-            padding-right: 24px;
-          }
-        
-          #clear-name {
-              position: absolute;
-              right: 6px;
-              top: 50%;
-              transform: translateY(-50%);
-              background: none;
-              border: none !important;
-              outline: none;
-              box-shadow: none;
-              cursor: pointer;
-              font-size: 16px;
-              line-height: 1;
-              padding: 0;
-              color: var(--primary-text-color);
-              z-index: 1;
-              border: none;
-              background-repeat: no-repeat;
-              overflow: hidden;
-              outline: none;
-            }
-        
-          #clear-filters {
-            background-color: #1976d2;
-            color: white;
-            font-weight: bold;
-            padding: 6px 14px;
-            font-size: 14px;
-            border-radius: 4px;
-            border: none;
-            cursor: pointer;
-            margin-left: 4px;
-          }
-        
-          #clear-filters:hover {
-            opacity: 0.9;
-          }
-          
-          #filter-name:focus {
-              outline: none;
-              box-shadow: none;
-            }
-          
-          #export-csv {
-              padding: 4px 12px;
-              font-size: 14px;
-              font-weight: bold;
-              cursor: pointer;
-              background-color: #1976d2;
-              color: white;
-              border: none;
-              border-radius: 4px;
-            }
+          .switch-row { display: inline-flex; align-items: center; gap: 8px; margin-right: 8px; }
+          #filters { gap: 8px !important; }
         `;
     
       // Append elements to the card
@@ -511,34 +497,48 @@ class ZHANetworkCard extends HTMLElement {
       this._config = cfg;
     
       // Restore selected filter values if present
-      ["filter-area", "filter-model", "filter-type", "filter-online", "filter-name"].forEach((id) => {
+      ["filter-area", "filter-model", "filter-type", "filter-online"].forEach((id) => {
         if (saved[id.replace("filter-", "")]) {
           const el = this.shadowRoot.getElementById(id);
           if (el) el.value = saved[id.replace("filter-", "")];
         }
       });
+      // restore name filter only if search is enabled and saved
+      if (cfg.search_enabled !== false && saved.name) {
+        const nameEl = this.shadowRoot.getElementById('filter-name');
+        if (nameEl) nameEl.value = saved.name;
+      }
     
-      // Add sorting listeners to headers
-      this.tbl.headers.forEach((name, idx) => {
-        const header = root.getElementById(name);
-        if (!header) return;
-    
+      // Add sorting listeners to header elements (use data-idx to reference original column index)
+      const headers = root.querySelectorAll('th');
+      headers.forEach((header) => {
         header.onclick = () => {
-          // Clear previous sort indicators
-          this.tbl.headers.forEach((n) => {
-            root.getElementById(n)?.classList.remove("headerSortDown", "headerSortUp");
-          });
-    
-          // Toggle sort direction
-          this.tbl.updateSortBy(idx);
-    
-          if (this.tbl.sort_by.includes("+")) {
-            header.classList.add("headerSortUp");
-          } else {
-            header.classList.add("headerSortDown");
+          try {
+            // respect global sorting enabled flag
+            if (cfg.sorting_enabled === false) return;
+
+            const origIdx = parseInt(header.dataset.idx);
+            if (Number.isNaN(origIdx)) return;
+
+            const colCfg = this.tbl.cols[origIdx];
+            if (!colCfg || colCfg.sortable === false) return;
+
+            // Clear previous sort indicators
+            headers.forEach((h) => h.classList.remove('headerSortDown', 'headerSortUp'));
+
+            // Toggle sort direction based on original column index
+            this.tbl.updateSortBy(origIdx);
+
+            if (this.tbl.sort_by && this.tbl.sort_by.includes('+')) {
+              header.classList.add('headerSortUp');
+            } else {
+              header.classList.add('headerSortDown');
+            }
+
+            this.applyFilters?.();
+          } catch (err) {
+            console.error('Header click failed', err);
           }
-    
-          this.applyFilters?.();
         };
       });
     }
@@ -587,24 +587,31 @@ class ZHANetworkCard extends HTMLElement {
   }
 
     applySorting(rows) {
+      // Respect global sorting_enabled flag on the card
+      if (this._config && this._config.sorting_enabled === false) return rows;
+
       const sort_col = this.tbl.sort_by;
       if (!sort_col) return rows;
-    
+
       const col_key = sort_col.slice(0, -1);
       const sort_dir = sort_col.endsWith("-") ? -1 : 1;
-    
+
       const sort_idx = this.tbl.cols.findIndex((col) =>
         ["id", "attr", "prop", "attr_as_list"].some(
           (attr) => attr in col && col[attr] === col_key
         )
       );
-    
+
       if (sort_idx >= 0) {
+        // Respect per-column sortable flag
+        const colCfg = this.tbl.cols[sort_idx];
+        if (colCfg && colCfg.sortable === false) return rows;
+
         const isNumeric = rows.every(row =>
           typeof row.data[sort_idx]?.content_num === "number" &&
           !Number.isNaN(row.data[sort_idx]?.content_num)
         );
-    
+
         rows.sort((a, b) =>
           sort_dir *
           compare(
@@ -613,7 +620,7 @@ class ZHANetworkCard extends HTMLElement {
           )
         );
       }
-    
+
       return rows;
     }
 
@@ -627,13 +634,27 @@ class ZHANetworkCard extends HTMLElement {
       const onlineVal = root.getElementById("filter-online")?.value;
       const nameVal = root.getElementById("filter-name")?.value?.toLowerCase();
     
-      // Highlight active filters
+      // Highlight active filters (adds visual indicator for any non-empty filter)
       ["filter-area", "filter-model", "filter-type", "filter-online", "filter-name"].forEach((id) => {
         const el = root.getElementById(id);
         if (el) {
           el.classList.toggle("filter-active", !!el.value);
         }
       });
+
+      // Show/hide the Clear button for name filter only when there's content
+      // The button is hidden by default in the template; we toggle its display here
+      const clearNameEl = root.getElementById('clear-name');
+      try {
+        const nameElem = root.getElementById('filter-name');
+        if (clearNameEl) {
+          if (nameElem && nameElem.value) {
+            clearNameEl.style.display = '';
+          } else {
+            clearNameEl.style.display = 'none';
+          }
+        }
+      } catch (e) {}
     
       // Save current filters and sorting to sessionStorage
       sessionStorage.setItem("zha_card_filters", JSON.stringify({
@@ -815,19 +836,20 @@ class ZHANetworkCard extends HTMLElement {
           });
         }
         
-        // Handle CSV export
+        // Handle CSV export (only when enabled)
         const exportBtn = root.getElementById("export-csv");
         if (exportBtn) {
           exportBtn.onclick = () => {
+            if (cfg.csv_enabled === false) return;
             const rows = this.tbl.get_rows();
             if (!rows.length) return;
-        
+
             const headers = this.tbl.headers;
             const csv = [];
-        
+
             // Headers
             csv.push(headers.join(","));
-        
+
             // Rows
             rows.forEach((row) => {
               const values = row.data.map((cell) => {
@@ -838,7 +860,7 @@ class ZHANetworkCard extends HTMLElement {
                 });
               csv.push(values.join(","));
             });
-        
+
             const blob = new Blob([csv.join("\n")], { type: "text/csv" });
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
@@ -860,4 +882,13 @@ class ZHANetworkCard extends HTMLElement {
   }
 }
 
-customElements.define("zha-table-ext", ZHANetworkCard);
+customElements.define("zha-table-card", ZHATableCard);
+
+/* ---------- Register the card so it shows up in the Lovelace card picker ----------- */
+window.customCards = window.customCards || [];
+window.customCards.push({
+  type: "zha-table-card",
+  name: "ZHA Table Card",
+  description: "Displays ZHA Zigbee devices in a table with status",
+  preview: true,
+});
