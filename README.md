@@ -35,7 +35,7 @@ Huge thanks to [@dmulcahey](https://github.com/dmulcahey) for the original card 
 ## 📋 Example Configuration
 
 ```yaml
-type: custom:zha-network-card-ext
+type: custom:zha-table-card
 sort_by: last_seen
 clickable: true
 columns:
