@@ -6,21 +6,44 @@ console.info(
 
 // Single source-of-truth for preset columns used across form, mapping and defaults
 const PRESET_COLUMNS = [
+  // basic identity
   { name: 'Name', prop: 'name' },
   { name: 'Object ID', prop: 'object_id' },
   { name: 'NWK', prop: 'nwk' },
-  { name: 'Available', prop: 'available', attr: 'available' },
+
+  // availability & power
+  { name: 'Available', attr: 'available' },
   { name: 'Power Source', prop: 'power_source', attr: 'power_source' },
+
+  // device info
   { name: 'Model', prop: 'model' },
-  { name: 'User given name', prop: 'user_given_name' }
+  { name: 'Manufacturer', attr: 'manufacturer' },
+  { name: 'IEEE', attr: 'ieee' },
+
+  // radio metrics
+  { name: 'RSSI', attr: 'rssi', numeric: true },
+  { name: 'LQI (%)', attr: 'lqi', numeric: true, align: 'center' },
+
+  // time
+  { name: 'Last Seen', attr: 'last_seen', modify: "(()=>{ if(!x) return ''; const d=new Date(Date.parse(x)); if(isNaN(d)) return x; const now=new Date(); if(d.getDate()==now.getDate()&&d.getMonth()==now.getMonth()&&d.getFullYear()==now.getFullYear()){return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')} else {return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')} })()" },
+
+  // quirks (merged): single column shows an icon with quirk class and whether it's applied
+  { name: 'Quirk', attr: 'quirk' },
+
+  // parent / neighbors / routes
+  { name: 'Parent', attr: 'parent_name' },
+  { name: 'Neighbors', attr: 'neighbors_names', modify: "'<span style=\"display:inline-block; max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;\" title=\"' + x + '\">' + x + '</span>'" },
+  { name: 'Routes', attr: 'routes_names', modify: "'<span style=\"display:inline-block; max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;\" title=\"' + x + '\">' + x + '</span>'" },
+
+  // battery (single entry)
+  { name: 'Battery', attr: 'battery', numeric: true, align: 'center', modify: "(()=>{ if (x===undefined||x===null||x==='') return ''; const n=Number(x); if (Number.isNaN(n)) return x; return (n>100?Math.round(n*100/255):n) + '%'; })()" }
 ];
 
 /** some helper functions, mmmh, am I the only one needing those? Am I doing something wrong? */
 // typical [[1,2,3], [6,7,8]] to [[1, 6], [2, 7], [3, 8]] converter
 var transpose = (m) => m[0].map((x, i) => m.map((x) => x[i]));
 
-// single items -> Array with item with length == 1
-var listify = (obj) => (obj instanceof Array ? obj : [obj]);
+// (removed unused `listify` helper)
     
 var compare = function (a, b) {
   const aNum = parseFloat(a);
@@ -39,6 +62,63 @@ var compare = function (a, b) {
     return String(a).localeCompare(String(b));
   }
 };
+
+// Normalize various color shapes (hex string, rgb object, array, numeric) to CSS hex or rgb() string
+function normalizeColor(color) {
+  if (!color && color !== 0) return null;
+  // Map common material color names to hex for nicer defaults (e.g. 'indigo' -> material indigo)
+  const MATERIAL_COLORS = {
+    indigo: '#3f51b5',
+    blue: '#2196f3',
+    red: '#f44336',
+    green: '#4caf50',
+    teal: '#009688',
+    amber: '#ffc107',
+    orange: '#ff9800',
+    deep_orange: '#ff5722',
+    purple: '#9c27b0',
+    deep_purple: '#673ab7',
+    pink: '#e91e63',
+    brown: '#795548',
+    grey: '#9e9e9e',
+    gray: '#9e9e9e',
+    cyan: '#00bcd4',
+    lime: '#cddc39',
+    yellow: '#ffeb3b'
+  };
+  // If it's already a string, map known names to hex otherwise return as-is
+  if (typeof color === 'string') {
+    const key = color.trim().toLowerCase();
+    if (MATERIAL_COLORS[key]) return MATERIAL_COLORS[key];
+    return color;
+  }
+  // If it's an object like { r: 255, g: 0, b: 0 } or { red:.. }
+  if (typeof color === 'object') {
+    if (Array.isArray(color) && color.length >= 3) {
+      return `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+    }
+    const r = color.r ?? color.red ?? color[0];
+    const g = color.g ?? color.green ?? color[1];
+    const b = color.b ?? color.blue ?? color[2];
+    if ([r,g,b].every((v) => typeof v === 'number')) return `rgb(${r}, ${g}, ${b})`;
+    if (typeof color.value === 'string') return color.value;
+    if (typeof color.color === 'string') return color.color;
+  }
+  // If it's a number, format as hex
+  if (typeof color === 'number') {
+    const hex = '#' + (color >>> 0).toString(16).padStart(6, '0');
+    return hex;
+  }
+  try { return String(color); } catch (e) { return null; }
+}
+
+// Normalize battery numeric values: if >100, assume 0-255 scale and convert to percent
+function normalizeBatteryValue(v) {
+  if (v === undefined || v === null || v === '') return v;
+  const n = Number(v);
+  if (Number.isNaN(n)) return v;
+  return n > 100 ? Math.round(n * 100 / 255) : n;
+}
 
 class DataTableZHA {
   constructor(cfg) {
@@ -60,7 +140,7 @@ class DataTableZHA {
 
     this.rows = [];
 
-    this.sort_by = "available-"; // standaard sorteren: unavailable eerst
+  this.sort_by = null; // no forced default; user can click headers to set sorting
   }
 
   add(...rows) {
@@ -125,7 +205,7 @@ class DataTableZHA {
 
   updateSortBy(idx) {
     let new_sort = this.cols[idx].attr || this.cols[idx].prop;
-    if (idx === 0) return; // niet sorteren op Available
+    // Allow sorting on any column (including Available). Sorting direction toggles when clicking the same column.
     if (this.sort_by && new_sort === this.sort_by.slice(0, -1)) {
       this.sort_by = new_sort + (this.sort_by.slice(-1) === "-" ? "+" : "-");
     } else {
@@ -153,9 +233,12 @@ class DataRowZHA {
           const parent_ieee = neighbors.find((n) => n.relationship === "Parent")?.ieee;
           if (!parent_ieee) return "-";
 
+          const parent_ieee_norm = String(parent_ieee).toLowerCase();
           for (const row of all_rows) {
             const dev = row.device?.attributes;
-            if (dev?.ieee === parent_ieee) {
+            if (!dev) continue;
+            const dev_ieee = dev.ieee || dev.mac || dev.extended_pan_id;
+            if (dev_ieee && String(dev_ieee).toLowerCase() === parent_ieee_norm) {
               return dev.user_given_name || dev.name || parent_ieee;
             }
           }
@@ -163,14 +246,59 @@ class DataRowZHA {
           return parent_ieee;
         }
 
-        if (col.attr === "neighbors_names") {
+  if (col.attr === "neighbors_names") {
           const neighbors = this.device.attributes.neighbors || [];
           const names = neighbors.map((n) => {
-              const match = all_rows.find((row) => row.device?.attributes?.ieee === n.ieee);
-              return match?.device?.attributes?.user_given_name || match?.device?.attributes?.name || n.ieee;
-            }).sort((a, b) => a.localeCompare(b));
-          
+              const searchIeee = String(n.ieee || n.address || n.mac || '').toLowerCase();
+              const match = all_rows.find((row) => {
+                const devIeee = row.device?.attributes?.ieee || row.device?.attributes?.mac || '';
+                return devIeee && String(devIeee).toLowerCase() === searchIeee;
+              });
+              return match?.device?.attributes?.user_given_name || match?.device?.attributes?.name || n.ieee || n.mac || '';
+            }).filter(Boolean).sort((a, b) => a.localeCompare(b));
+
           return names.join(", ");
+        }
+
+        // Generic attribute lookup (manufacturer, model, ieee, rssi, lqi, last_seen, ...)
+        if (this.device && this.device.attributes) {
+          // Direct match
+          if (col.attr in this.device.attributes) return this.device.attributes[col.attr];
+          // Support merged 'quirk' attribute: prefer object with { class, applied } or fall back to separate keys
+          if (col.attr === 'quirk') {
+            const obj = {};
+            if ('quirk_class' in this.device.attributes) obj.class = this.device.attributes.quirk_class;
+            if ('quirk_applied' in this.device.attributes) obj.applied = this.device.attributes.quirk_applied;
+            // If neither present, return undefined to allow other fallbacks
+            if (Object.keys(obj).length) return obj;
+          }
+          // Common fallback names for battery (only prefer `battery`)
+          if (col.attr === 'battery') {
+            if ('battery' in this.device.attributes) return this.device.attributes.battery;
+          }
+          // Common fallback names for rssi
+          if (col.attr === 'rssi') {
+            if ('rssi' in this.device.attributes) return this.device.attributes.rssi;
+            if ('rssi_dbm' in this.device.attributes) return this.device.attributes.rssi_dbm;
+            if ('signal_strength' in this.device.attributes) return this.device.attributes.signal_strength;
+          }
+          // Generic search: try to find keys containing 'battery' or 'rssi' when direct keys missing
+          const keys = Object.keys(this.device.attributes || {});
+          if (col.attr === 'battery') {
+            const batteryKey = keys.find(k => /battery/i.test(k));
+            if (batteryKey) return this.device.attributes[batteryKey];
+            // also check for short 'batt'
+            const battKey = keys.find(k => /batt/i.test(k));
+            if (battKey) return this.device.attributes[battKey];
+          }
+          if (col.attr === 'rssi') {
+            const rssiKey = keys.find(k => /(rssi|dbm|signal|lqi)/i.test(k));
+            if (rssiKey) return this.device.attributes[rssiKey];
+          }
+        }
+        // Fallback: maybe the attribute is at top-level on device object
+        if (this.device && col.attr in this.device) {
+          return this.device[col.attr];
         }
 
         if (col.attr === "routes_names") {
@@ -178,15 +306,34 @@ class DataRowZHA {
           const hop_set = new Set();
           const names = routes
             .map((r) => {
-              const hop = r.next_hop?.toLowerCase();
-              if (!hop || hop === "0xfffe" || hop_set.has(hop)) return null;
+              let hop = r.next_hop;
+              if (hop === undefined || hop === null) return null;
+              // Normalize hop to comparable lower-case hex string like "0x1234"
+              if (typeof hop === 'string') {
+                hop = hop.toLowerCase();
+              } else if (typeof hop === 'number') {
+                hop = '0x' + hop.toString(16).padStart(4, '0');
+              } else {
+                hop = String(hop).toLowerCase();
+              }
+
+              if (!hop || hop === '0xfffe' || hop_set.has(hop)) return null;
               hop_set.add(hop);
 
               const status = r.route_status || "";
 
               const match = all_rows.find((row) => {
                 const nwk = row.device?.attributes?.nwk;
-                const formatted = "0x" + nwk.toString(16).padStart(4, "0").toLowerCase();
+                if (nwk === undefined || nwk === null) return false;
+                let formatted;
+                if (typeof nwk === 'string') {
+                  // maybe already hex like '0x1d05'
+                  formatted = nwk.toLowerCase();
+                } else if (typeof nwk === 'number') {
+                  formatted = '0x' + nwk.toString(16).padStart(4, '0').toLowerCase();
+                } else {
+                  try { formatted = String(nwk).toLowerCase(); } catch (e) { return false; }
+                }
                 return formatted === hop;
               });
 
@@ -212,7 +359,7 @@ class DataRowZHA {
           ) {
             return this.device.attributes["user_given_name"];
           } else {
-            return this.device.attributes.name;
+            return this.device.attributes.name || this.device.name;
           }
         } else if (col.prop == "nwk") {
           let hex = this.device.attributes["nwk"];
@@ -221,7 +368,10 @@ class DataRowZHA {
           }
           return "0x" + hex.toString(16).padStart(4, "0");
         } else {
-          return col.prop in this.device ? this.device[col.prop] : null;
+          // fallback to attributes if prop is not top-level
+          if (col.prop in this.device) return this.device[col.prop];
+          if (this.device.attributes && col.prop in this.device.attributes) return this.device.attributes[col.prop];
+          return null;
         }
       } else if ("attr_as_list" in col) {
         this.has_multiple = true;
@@ -252,16 +402,109 @@ class DataRowZHA {
       let cfg = col_cfgs[idx];
       let content;
 
-      // Custom rendering for Available and Power Source
+      // runtime fallbacks that require hass/state lookups: try to populate RSSI or battery
+      // when the raw attribute is missing. We compute these here so numeric parsing below
+      // sees the fallback values as well.
+      try {
+        if ((cfg && cfg.attr === 'rssi') && (x === undefined || x === null || x === '')) {
+          if (hass && base_entity_id) {
+            const rssiCandidates = ['_rssi_average', '_rssi', '_rssi_dbm', '_rssi_avg'];
+            for (const sfx of rssiCandidates) {
+              const ent = hass.states[base_entity_id + sfx];
+              if (ent && ent.state !== undefined && ent.state !== 'unknown' && ent.state !== 'unavailable') {
+                x = ent.state;
+                break;
+              }
+            }
+          }
+        }
+
+        if ((cfg && cfg.attr === 'battery') && (x === undefined || x === null || x === '')) {
+          if (hass && base_entity_id) {
+            const batCandidates = ['_battery'];
+            for (const sfx of batCandidates) {
+              const ent = hass.states[base_entity_id + sfx];
+              if (ent && ent.state !== undefined && ent.state !== 'unknown' && ent.state !== 'unavailable') {
+                const st = ent.state;
+                const n = Number(st);
+                x = Number.isNaN(n) ? st : n;
+                break;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // don't block rendering if hass/state access fails for any reason
+      }
+
+        // Heavy fallback: search all hass.states for entity ids that mention this device
+        // and appear to be battery/rssi sensors. This is last-resort and used only when
+        // we still haven't found a value. It may be a bit more expensive in environments
+        // with many entities, but is effective where separate sensors are created.
+        try {
+          if (hass && (x === undefined || x === null || x === '') && this.device && this.device.attributes) {
+            const idPieces = [];
+            const attrs = this.device.attributes;
+            if (attrs.device_reg_id) idPieces.push(String(attrs.device_reg_id).toLowerCase());
+            if (attrs.ieee) idPieces.push(String(attrs.ieee).toLowerCase());
+            if (attrs.name) idPieces.push(String(attrs.name).toLowerCase());
+            if (this.device.device_reg_id) idPieces.push(String(this.device.device_reg_id).toLowerCase());
+            // First try likely exact object_id patterns like sensor.<base>_battery or sensor.<base>_battery_level
+            if (idPieces.length && (cfg && (cfg.attr === 'battery' || cfg.attr === 'battery_level'))) {
+              const bases = idPieces.map(p => p.replace(/[^a-z0-9_]/gi, '_'));
+              const suffixes = ['_battery', '_battery_level', '_battery_percent', '_batt', '_level'];
+              const domains = ['sensor', 'binary_sensor', 'device_tracker', 'sensor'];
+              let found = false;
+              outerLoop: for (const base of bases) {
+                for (const sfx of suffixes) {
+                  for (const dom of domains) {
+                    const eid = `${dom}.${base}${sfx}`.toLowerCase();
+                    const ent = hass.states[eid];
+                    if (ent && ent.state !== undefined && ent.state !== 'unknown' && ent.state !== 'unavailable') {
+                      const st = ent.state;
+                      const n = Number(st);
+                      x = Number.isNaN(n) ? st : n;
+                      found = true;
+                      break outerLoop;
+                    }
+                  }
+                }
+              }
+              if (!found) {
+                const keyRegex = /(battery|batt|level|percent)/i;
+                for (const eid of Object.keys(hass.states)) {
+                  const low = eid.toLowerCase();
+                  if (!keyRegex.test(low)) continue;
+                  if (!idPieces.some(p => p && low.includes(p))) continue;
+                  const ent = hass.states[eid];
+                  if (!ent || ent.state === undefined || ent.state === 'unknown' || ent.state === 'unavailable') continue;
+                  const st = ent.state;
+                  const n = Number(st);
+                  x = Number.isNaN(n) ? st : n;
+                  break;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          // swallow
+        }
+
+  // Custom rendering for Available, Power Source and Quirk applied
       if (cfg.attr === "available") {
         let available = x;
         let icon = available ? "mdi:check-circle" : "mdi:close-circle";
         let color = available ? "#21c960" : "#fa4444";
         content = `<ha-icon icon="${icon}" style="color:${color};vertical-align:middle"></ha-icon>`;
 
-      } else if (cfg && cfg.attr === "power_source") {
+  } else if (cfg && cfg.attr === "power_source") {
         let powerSource = (typeof x === "string" ? x.toLowerCase() : x);
-        let battery = this.device.attributes.battery || this.device.attributes.battery_level;
+        // try multiple battery attribute keys and normalize
+        let battery = undefined;
+        if (this.device.attributes) {
+          battery = this.device.attributes.battery ?? this.device.attributes.battery_level ?? this.device.attributes.battery_percent ?? this.device.attributes.batt;
+        }
+        battery = normalizeBatteryValue(battery);
         if (powerSource && powerSource.includes("mains")) {
             content = `<ha-icon icon="mdi:power-plug" style="color:#1976d2;vertical-align:middle"></ha-icon>`;
         } else if (powerSource && powerSource.includes("battery")) {
@@ -273,8 +516,49 @@ class DataRowZHA {
             content = x ?? "N/A";
         }
 
+      } else if (cfg && cfg.attr === 'quirk') {
+        // x may be an object { class, applied } or a string.
+        let qclass = '';
+        let applied = false;
+        if (x && typeof x === 'object') {
+          qclass = x.class || x.quirk_class || '';
+          applied = !!x.applied;
+        } else if (typeof x === 'string') {
+          qclass = x;
+          applied = true;
+        } else {
+          // fallback: check raw device attributes
+          qclass = this.device?.attributes?.quirk_class || '';
+          applied = !!this.device?.attributes?.quirk_applied;
+        }
+        const icon = 'mdi:bug';
+        const color = applied ? 'var(--success-color, #2e7d32)' : 'var(--secondary-text-color, #666)';
+        const title = qclass ? `${qclass} (${applied ? 'applied' : 'not applied'})` : (applied ? 'quirk applied' : 'no quirk');
+        content = `<span title="${title}" style="display:inline-flex;align-items:center;gap:6px;"><ha-icon icon="${icon}" style="--mdc-icon-size:18px;color:${color};opacity:0.95;vertical-align:middle"></ha-icon>${qclass ? `<span style="font-size:0.85em;color:var(--secondary-text-color)">${qclass}</span>` : ''}</span>`;
+      } else if (cfg && cfg.attr === 'quirk_applied') {
+        // Backwards-compatible: render applied state only (old configs)
+        const applied = !!x;
+        const icon = applied ? 'mdi:check' : 'mdi:close';
+        const color = applied ? 'var(--success-color, #2e7d32)' : 'var(--error-color, #c62828)';
+        content = `<ha-icon icon="${icon}" style="--mdc-icon-size:18px;color:${color};opacity:0.85;vertical-align:middle"></ha-icon>`;
       } else {
-        content = cfg.modify ? eval(cfg.modify) : x ?? "N/A";
+        if (cfg.modify) {
+          try {
+            const _hass = window._zha_card_hass || null;
+            const fn = new Function('x', 'hass', 'device', `return (${cfg.modify});`);
+            content = fn(x, _hass, this.device);
+          } catch (err) {
+            try {
+              content = eval(cfg.modify);
+            } catch (err2) {
+              console.warn('modify evaluation failed', err, err2);
+              content = x ?? '';
+            }
+          }
+        } else {
+          // Default: render empty string for missing values (avoid 'N/A')
+          content = x ?? "";
+        }
       }
 
       let numeric = undefined;
@@ -283,10 +567,20 @@ class DataRowZHA {
           const ts = Date.parse(x);
           numeric = isNaN(ts) ? -Infinity : ts;
         } else {
-          numeric = parseFloat(x);
-          if (Number.isNaN(numeric)) {
-            const match = typeof content === "string" ? content.match(/[-]?\d+(\.\d+)?/) : null;
-            numeric = match ? parseFloat(match[0]) : -Infinity;
+          // For battery column, normalize possible 0-255 values to percent first
+          if (cfg.attr === 'battery') {
+            const nv = normalizeBatteryValue(x);
+            numeric = typeof nv === 'number' ? nv : parseFloat(nv);
+          } else if (cfg.attr === 'rssi' || cfg.attr === 'lqi') {
+            // try to parse numeric rssi/lqi, otherwise treat as missing (so sorting puts missing last)
+            const parsed = parseFloat(x);
+            numeric = Number.isNaN(parsed) ? -Infinity : parsed;
+          } else {
+            numeric = parseFloat(x);
+            if (Number.isNaN(numeric)) {
+              const match = typeof content === "string" ? content.match(/[-]?\d+(\.\d+)?/) : null;
+              numeric = match ? parseFloat(match[0]) : -Infinity;
+            }
           }
         }
       }
@@ -305,25 +599,22 @@ class DataRowZHA {
     return this;
   }
 }
-    
-class ZHATableCard extends HTMLElement {
-  constructor() {
-    super();
-    this.attachShadow({ mode: 'open' });
-    this.card_height = 1;
-    this.tbl = null;
-  }
 
+// Separate class responsible for exposing the editor schema and normalizing
+// editor-shaped config objects returned by various HA frontends.
+class ZHAConfigUI {
   static getConfigForm() {
-    // Consolidated HA form: grouped fields for header, columns, visibility and features.
-    // Note: the built-in editor does not provide a true accordion/expandable API here; grouping helps
-    // visually and clarifies intent. For fully dynamic, runtime-populated column lists a custom
-    // config editor element is required.
-    const presetOptions = PRESET_COLUMNS.map(c => ({ value: c.prop, label: c.name }));
-
+    const presetOptions = PRESET_COLUMNS.map(c => ({ value: c.prop || c.attr || c.name, label: c.name }));
     return {
       schema: [
-        // Group header fields: title, icon, color, show_title, show_icon
+        {
+          name: 'visible_columns',
+          type: 'list',
+          description: 'Drag to reorder visible columns. Use the content.columns multi-select for quick additions.',
+          schema: [
+            { name: 'prop', required: true, selector: { select: { options: presetOptions } }, description: 'Pick a column to show' }
+          ]
+        },
         {
           name: "content",
           type: "expandable",
@@ -340,7 +631,6 @@ class ZHATableCard extends HTMLElement {
                 { name: 'show_icon', required: false, selector: { boolean: {} }, description: 'Show header icon', default: true }
               ]
             },
-            // Group column configuration: full list of columns with reorder and visibility
             {
               name: 'visible_columns',
               type: 'list',
@@ -351,11 +641,9 @@ class ZHATableCard extends HTMLElement {
                 { name: 'hidden', required: false, selector: { boolean: {} }, description: 'Hide this column' }
               ],
             },
-            // Quick multi-select of visible columns from a preset list; sets hidden=true on other columns
             { name: 'columns', selector: { select: { multiple: true, options: presetOptions } } },
           ]
         },
-        // Group interaction features: sorting, filtering, search, CSV export
         {
           name: "interactions",
           type: "expandable",
@@ -373,16 +661,174 @@ class ZHATableCard extends HTMLElement {
               description: 'Feature toggles'
             }
           ]
-
         }
       ]
     };
   }
 
+  // Normalize the variety of shapes the HA editor or user may hand us.
+  // Returns a new config object safe to use by the card.
+  static normalizeConfig(inCfg) {
+    const cfg = Object.assign({}, inCfg || {});
+    try {
+      if (cfg.content && typeof cfg.content === 'object') {
+        const c = cfg.content;
+        if (c.header_grid && typeof c.header_grid === 'object') {
+          const hg = c.header_grid;
+          if (hg.title !== undefined) cfg.title = hg.title;
+          if (hg.title_icon !== undefined) cfg.title_icon = hg.title_icon;
+          if (hg.color !== undefined) cfg.color = hg.color;
+          if (hg.show_title !== undefined) cfg.show_title = hg.show_title;
+          if (hg.show_icon !== undefined) cfg.show_icon = hg.show_icon;
+        }
+      }
+      if (cfg.interactions && typeof cfg.interactions === 'object') {
+        const it = cfg.interactions;
+        if (it.features_grid && typeof it.features_grid === 'object') {
+          const fg = it.features_grid;
+          if (fg.sorting !== undefined) cfg.sorting = fg.sorting;
+          if (fg.csv_export !== undefined) cfg.csv_export = fg.csv_export;
+          if (fg.filters !== undefined) cfg.filters = fg.filters;
+          if (fg.search !== undefined) cfg.search = fg.search;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to merge expandable groups into config', e);
+    }
+
+    try {
+      const maybeHG = cfg.header_grid || (cfg.content && cfg.content.header_grid);
+      if (maybeHG && typeof maybeHG === 'object') {
+        const hg = maybeHG;
+        if (hg.title !== undefined) cfg.title = hg.title;
+        if (hg.title_icon !== undefined) cfg.title_icon = hg.title_icon;
+        if (hg.header_color !== undefined) cfg.color = hg.header_color;
+        if (hg.color !== undefined) cfg.color = hg.color;
+        if (hg.show_title !== undefined) cfg.show_title = hg.show_title;
+        if (hg.show_icon !== undefined) cfg.show_icon = hg.show_icon;
+      }
+
+      const presetMap = PRESET_COLUMNS.reduce((acc, c) => { const key = c.prop || c.attr || c.name; acc[key] = c; return acc; }, {});
+
+      if (cfg.content && Array.isArray(cfg.content.columns)) {
+        cfg.columns = cfg.content.columns.map((c) => {
+          if (typeof c === 'string') {
+            const preset = presetMap[c];
+            if (preset) return Object.assign({}, preset);
+            return { prop: c, name: c };
+          }
+          if (c && typeof c === 'object') return Object.assign({}, c);
+          return { prop: String(c), name: String(c) };
+        });
+      }
+
+      if (Array.isArray(cfg.columns) && cfg.columns.length && typeof cfg.columns[0] === 'string') {
+        cfg.columns = cfg.columns.map((c) => {
+          if (typeof c === 'string') {
+            const preset = presetMap[c];
+            if (preset) return Object.assign({}, preset);
+            return { prop: c, name: c };
+          }
+          return Object.assign({}, c);
+        });
+      }
+
+      const providedVisible = Array.isArray(cfg.visible_columns)
+        ? cfg.visible_columns
+        : Array.isArray(cfg.content && cfg.content.visible_columns)
+        ? cfg.content.visible_columns
+        : null;
+
+      if (Array.isArray(providedVisible)) {
+        const visibleKeys = providedVisible.map((item) => {
+          if (typeof item === 'string') return item;
+          if (item && typeof item === 'object') return item.prop || item.attr || item.name || JSON.stringify(item);
+          return String(item);
+        }).map(String);
+
+        if (!Array.isArray(cfg.columns) || !cfg.columns.length) {
+          cfg.columns = PRESET_COLUMNS.map(c => Object.assign({}, c));
+        }
+
+        const colMap = new Map();
+        cfg.columns.forEach((col) => {
+          const key = String(col.prop || col.attr || col.name || JSON.stringify(col));
+          colMap.set(key, Object.assign({}, col));
+        });
+
+        const ordered = [];
+        visibleKeys.forEach((k) => {
+          if (colMap.has(k)) {
+            const c = colMap.get(k);
+            c.hidden = false;
+            ordered.push(c);
+            colMap.delete(k);
+          } else {
+            ordered.push({ prop: k, name: presetMap[k] || k, hidden: false });
+          }
+        });
+
+        for (const [key, col] of colMap.entries()) {
+          col.hidden = true;
+          ordered.push(col);
+        }
+
+        cfg.columns = ordered;
+        cfg.visible_columns = visibleKeys;
+      }
+    } catch (e) {
+      console.warn('Failed to merge nested editor groups into config', e);
+    }
+
+    // sensible defaults
+    if (cfg.title === undefined) cfg.title = "Table";
+    if (cfg.title_icon === undefined) cfg.title_icon = "mdi:zigbee";
+    if (cfg.filters === undefined) cfg.filters = true;
+    if (cfg.search === undefined) cfg.search = true;
+    if (cfg.csv_export === undefined) cfg.csv_export = true;
+    if (cfg.clickable === undefined) cfg.clickable = true;
+    if (cfg.offline_first === undefined) cfg.offline_first = true;
+
+    // Normalize color shapes returned by ui_color selector
+    if (cfg.color && typeof cfg.color === 'object') {
+      if (typeof cfg.color.color === 'string' && cfg.color.color) cfg.color = cfg.color.color;
+      else if (typeof cfg.color.value === 'string' && cfg.color.value) cfg.color = cfg.color.value;
+      else if (typeof cfg.color.theme === 'string' && cfg.color.theme) cfg.color = cfg.color.theme;
+      else {
+        try {
+          const norm = normalizeColor(cfg.color);
+          if (norm) cfg.color = norm;
+          else if (cfg.color.css && typeof cfg.color.css === 'string') cfg.color = cfg.color.css;
+          else if (cfg.color.var && typeof cfg.color.var === 'string') cfg.color = cfg.color.var;
+          else cfg.color = JSON.stringify(cfg.color);
+        } catch (e) {
+          cfg.color = String(cfg.color);
+        }
+      }
+    }
+
+    return cfg;
+  }
+}
+    
+class ZHATableCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: 'open' });
+    this.card_height = 1;
+    this.tbl = null;
+  }
+
+  static getConfigForm() {
+    // Delegate to the dedicated config UI helper
+    return ZHAConfigUI.getConfigForm();
+  }
+
   setConfig(config) {
     const root = this.shadowRoot;
     if (root && root.lastChild) root.removeChild(root.lastChild);
-    const cfg = Object.assign({}, config);
+    // Normalize config shapes via ZHAConfigUI helper
+    const cfg = ZHAConfigUI.normalizeConfig(config);
     // Support expandable-grouped editors: some frontends place grouped fields under
     // `content` or `interactions` keys (when using a custom expandable UI). Merge
     // those nested grids into the top-level config so the card reacts to changes.
@@ -428,18 +874,33 @@ class ZHATableCard extends HTMLElement {
           if (hg.show_icon !== undefined) cfg.show_icon = hg.show_icon;
         }
 
-        const presetMap = PRESET_COLUMNS.reduce((acc, c) => { acc[c.prop] = c.name; return acc; }, {});
+        // Map preset keys (prop|attr|name) to the full preset object for robust lookups
+  const presetMap = PRESET_COLUMNS.reduce((acc, c) => { const key = c.prop || c.attr || c.name; acc[key] = c; return acc; }, {});
         // If editor nests columns under cfg.content.columns (expandable group), merge them up
         if (cfg.content && Array.isArray(cfg.content.columns)) {
           // Convert string values (from multi-select) into proper column objects
           cfg.columns = cfg.content.columns.map((c) => {
             if (typeof c === 'string') {
-              return { prop: c, name: presetMap[c] || c };
+              const preset = presetMap[c];
+              if (preset) return Object.assign({}, preset);
+              return { prop: c, name: c };
             }
             if (c && typeof c === 'object') {
               return Object.assign({}, c);
             }
             return { prop: String(c), name: String(c) };
+          });
+        }
+
+        // Also accept a top-level `columns` array that may be a list of strings (short syntax)
+        if (Array.isArray(cfg.columns) && cfg.columns.length && typeof cfg.columns[0] === 'string') {
+          cfg.columns = cfg.columns.map((c) => {
+            if (typeof c === 'string') {
+              const preset = presetMap[c];
+              if (preset) return Object.assign({}, preset);
+              return { prop: c, name: c };
+            }
+            return Object.assign({}, c);
           });
         }
 
@@ -505,28 +966,12 @@ class ZHATableCard extends HTMLElement {
     if (cfg.filters === undefined) cfg.filters = true;
     if (cfg.search === undefined) cfg.search = true;
     if (cfg.csv_export === undefined) cfg.csv_export = true;
+    if (cfg.clickable === undefined) cfg.clickable = true;
+    if (cfg.offline_first === undefined) cfg.offline_first = true;
 
 
     // Normalize color object returned by ui_color selector (some frontends return an object)
-    if (cfg.color && typeof cfg.color === 'object') {
-      // Common shapes: { color: '#rrggbb' } or { value: '#rrggbb' } or theme-value strings
-      if (typeof cfg.color.color === 'string' && cfg.color.color) {
-        cfg.color = cfg.color.color;
-      } else if (typeof cfg.color.value === 'string' && cfg.color.value) {
-        cfg.color = cfg.color.value;
-      } else if (typeof cfg.color.theme === 'string' && cfg.color.theme) {
-        cfg.color = cfg.color.theme;
-      } else {
-        // fallback: try to stringify sensible fields, otherwise leave as-is
-        try {
-          if (cfg.color.css && typeof cfg.color.css === 'string') cfg.color = cfg.color.css;
-          else if (cfg.color.var && typeof cfg.color.var === 'string') cfg.color = cfg.color.var;
-          else cfg.color = JSON.stringify(cfg.color);
-        } catch (e) {
-          cfg.color = String(cfg.color);
-        }
-      }
-    }
+    // color normalization handled in ZHAConfigUI.normalizeConfig already
       const card = document.createElement("ha-card");
       // Show icon and/or title based on config
       let showTitle = cfg.show_title !== false;
@@ -605,7 +1050,7 @@ class ZHATableCard extends HTMLElement {
       if (cfg.search !== false) {
         searchHtml += `
           <div id="search" style="padding: 10px; display: flex; align-items: center; gap: 8px;">
-            <label style="flex: 1;">Name
+            <label style="flex: 1;">
               <div class="name-wrapper" style="display: flex; position: relative;">
                 <input id="filter-name" type="text" placeholder="Search by name..." style="width: 100%;" />
                 <!-- Visible clear button for search (handler exists below) -->
@@ -636,13 +1081,17 @@ class ZHATableCard extends HTMLElement {
       // determine header color based on config
       let headerColor = '#03a9f4';
       if (cfg.color) {
+        // allow the editor to return named palette keywords. normalizeColor will
+        // translate common names to hex and pass-through css variables.
         if (cfg.color === 'Accent color') headerColor = 'var(--accent-color, var(--primary-color))';
         else if (cfg.color === 'Primary color' || cfg.color === 'State color (default)') headerColor = 'var(--primary-color)';
         else if (cfg.color === 'Background color') headerColor = 'var(--primary-background-color, var(--paper-card-background-color))';
         else if (cfg.color === 'Primary text color') headerColor = 'var(--primary-text-color, var(--text-primary-color))';
         else if (cfg.color === 'None') headerColor = 'transparent';
-        else if (/^#([0-9A-Fa-f]{3}){1,2}$/.test(cfg.color)) headerColor = cfg.color;
-        else headerColor = cfg.color; // fallback: maybe a css variable name
+        else {
+          const norm = normalizeColor(cfg.color);
+          headerColor = norm || cfg.color;
+        }
       }
 
       // Card style
@@ -773,6 +1222,19 @@ class ZHATableCard extends HTMLElement {
       // Respect global sorting flag on the card
       if (this._config && this._config.sorting === false) return rows;
 
+      // If configured, always put offline devices (available === false) first
+      if (this._config && this._config.offline_first) {
+        rows.sort((a,b) => {
+          const aAvail = a.device?.attributes?.available;
+          const bAvail = b.device?.attributes?.available;
+          if (aAvail === bAvail) return 0;
+          // offline (false) => should come first
+          if (aAvail === false) return -1;
+          if (bAvail === false) return 1;
+          return 0;
+        });
+      }
+
       const sort_col = this.tbl.sort_by;
       if (!sort_col) return rows;
 
@@ -897,9 +1359,10 @@ class ZHATableCard extends HTMLElement {
       window._zha_card_hass = hass;
     
       hass.callWS({ type: "zha/devices" }).then((devices) => {
-        const rawRows = devices.map(
-          (device) => new DataRowZHA({ attributes: device }, config.strict)
-        );
+        // Follow the pattern used by zha-network-card: wrap each returned device
+        // into an object with an `attributes` property. This ensures a consistent
+        // shape for DataRowZHA and avoids copying top-level keys that may not exist.
+        const rawRows = devices.map((device) => new DataRowZHA({ attributes: device }, config.strict));
         rawRows.forEach((row) => row.get_raw_data(config.columns, rawRows));
     
         this.tbl.clear_rows();
@@ -1078,3 +1541,35 @@ window.customCards.push({
   description: "Displays ZHA Zigbee devices in a table with status",
   preview: true,
 });
+
+// Debug helper: call `window.zha_table_card_debug(hass)` in the browser console
+// to print a diagnostic summary of ZHA devices, their attributes and likely
+// matching entity ids for battery/RSSI. Useful to tune fallback heuristics.
+window.zha_table_card_debug = async function(hass) {
+  if (!hass) {
+    console.warn('Please pass the Home Assistant `hass` object, e.g. window.hass or window._zha_card_hass');
+    return;
+  }
+  try {
+    const devices = await hass.callWS({ type: 'zha/devices' });
+    console.group('ZHA Table Card Debug - devices: ' + devices.length);
+    for (const d of devices.slice(0, 50)) {
+      console.groupCollapsed(`device: ${d.attributes?.name || d.name || d.device_reg_id || '(no name)'} (${d.attributes?.device_reg_id || d.device_reg_id || 'no-id'})`);
+      console.log('attributes keys:', Object.keys(d.attributes || {}).sort());
+      const idPieces = [];
+      if (d.attributes?.device_reg_id) idPieces.push(String(d.attributes.device_reg_id).toLowerCase());
+      if (d.attributes?.ieee) idPieces.push(String(d.attributes.ieee).toLowerCase());
+      if (d.attributes?.name) idPieces.push(String(d.attributes.name).toLowerCase());
+      const keys = Object.keys(hass.states || {});
+      const matches = keys.filter(k => {
+        const low = k.toLowerCase();
+        return idPieces.some(p => p && low.includes(p)) && /(rssi|dbm|signal|lqi|battery|batt|level|percent)/i.test(low);
+      }).slice(0,10);
+      console.log('likely matching sensor entity_ids (first 10):', matches);
+      console.groupEnd();
+    }
+    console.groupEnd();
+  } catch (e) {
+    console.error('Debug helper failed', e);
+  }
+};
