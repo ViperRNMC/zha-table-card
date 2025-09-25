@@ -1,232 +1,120 @@
 # ZHA Table Card
 
-This is an **extended version** of the excellent [`zha-network-card`](https://github.com/dmulcahey/zha-network-card) created by [@dmulcahey](https://github.com/dmulcahey), which allows you to **visualize and monitor your Zigbee devices** via ZHA (Zigbee Home Assistant integration).
+Een gebruiksvriendelijke tabelweergave voor ZHA (Zigbee Home Assistant) apparaten. Deze fork breidt de originele `zha-network-card` en `zha-network-card-ext`uit met extra functies voor overzicht en beheer van  Zigbee-netwerken.
 
-> ⚠️ This version is not officially maintained by the original author and adds several features not available in the original card.
+## Belangrijkste features
 
-## ✨ Why this version
+- Filteren op area, model, apparaat-type, online-status en naam
+- Filters en sortering blijven behouden tussen pagina-herladingen (sessionStorage)
+- Export naar CSV
+- Samengevoegde `quirk`-kolom: toont een icoon met tooltip en optionele tekst; ondersteunt ook de oude attributen `quirk_class` en `quirk_applied`
+- Offline-first sortering (configuratie-optie)
+- Klikbare rijen die naar de device-pagina navigeren
 
-The original card was great but lacked some advanced functionality required for monitoring a large or complex Zigbee network effectively. This fork adds:
+## Installatie
 
-- Filtering by area, model, device type, online status, and name
-- Persistent sorting and filters across reloads
-- Visual indication of active filters
-- Export to CSV
-- Integration with sensor-based average LQI and RSSI values
-- Enhanced routing and neighbor display
-- Improved responsive layout and styling
-
-![Example](./screenshot.png)
-
-## 🙏 Acknowledgments
-
-Huge thanks to [@dmulcahey](https://github.com/dmulcahey) for the original card and his contribution to the Home Assistant ecosystem.
-
-## 💾 Installation
-
-1. Save `zha-table-card.js` into your `www/` folder.
-2. Add it to your Lovelace resources:
+1. Plaats `zha-table-card.js` in de `www/` map van je Home Assistant installatie (of een andere statische resource-locatie).
+2. Voeg de resource toe aan Lovelace (Resources):
 
 ```yaml
 - url: /local/zha-table-card.js
   type: module
 ```
 
-## 📋 Example Configuration
+3. Herlaad de frontend of clear de cache als je de kaart meteen wilt testen.
 
-```yaml
-type: custom:zha-table-card
-sort_by: last_seen
-clickable: true
-columns:
-  - name: Name
-    prop: name
-  - name: Area
-    attr: area_id
-  - attr: available
-    id: available
-    modify: x || "false"
-    name: Online
-  - attr: manufacturer
-    name: Manufacturer
-  - attr: model
-    name: Model
-    modify: |-
-      if (x == undefined || x == null)
-        '<span style="color:red;">' + x + '</span>'
-      else if (x == 'lumi.plug.maeu01')
-        '<span style="color:green;">' + x + '</span>'
-      else if (x == 'lumi.switch.l2aeu1')
-        '<span style="color:green;">' + x + '</span>'
-      else if (x == 'lumi.switch.l1aeu1')
-        '<span style="color:green;">' + x + '</span>'
-      else if (x == 'lumi.plug.aeu001')
-        '<span style="color:green;">' + x + '</span>'
-      else if (x == 'lumi.light.aqcn02')
-        '<span style="color:orange;">' + x + '</span>'
-      else
-        '<span style="color:black;">' + x + '</span>'
-  - attr: rssi
-    name: RSSI
-    numeric: true
-    modify: |-
-      if (x == undefined || x == null)
-        '<span style="color:black;">N/A</span>'
-      else if (x < -70)
-        '<span style="color:red;">' + x + '</span>'
-      else if (x < -60 )
-        '<span style="color:orange;">' + x + '</span>'
-      else
-        '<span style="color:green;">' + x + '</span>'
-  - attr: rssi_avg
-    name: RSSI (avg)
-    numeric: true
-    modify: |-
-      const avg = hass.states[base_entity_id + '_rssi_average']?.state;
-      const val = parseFloat(avg);
-      const x = !Number.isNaN(val) ? Math.round(val) : undefined;
-      if (x === undefined || x === null)
-        '<span style="color:black;">N/A</span>';
-      else if (x < -70)
-        '<span style="color:red;">' + x + '</span>';
-      else if (x < -60)
-        '<span style="color:orange;">' + x + '</span>';
-      else
-        '<span style="color:green;">' + x + '</span>';
-  - attr: lqi
-    name: LQI
-    numeric: true
-    modify: |-
-      if (x === undefined || x === null)
-        '<span style="color:black;">N/A</span>';
-      else if (x < 100)
-        '<span style="color:red;">' + x + '</span>';
-      else if (x < 200)
-        '<span style="color:orange;">' + x + '</span>';
-      else
-        '<span style="color:green;">' + x + '</span>';
-  - attr: lqi_avg
-    name: LQI (avg)
-    numeric: true
-    modify: |-
-      const avg = hass.states[base_entity_id + '_lqi_average']?.state;
-      const val = parseFloat(avg);
-      const x = !Number.isNaN(val) ? Math.round(val) : undefined;
-      if (x === undefined || x === null)
-        '<span style="color:black;">N/A</span>';
-      else if (x < 100)
-        '<span style="color:red;">' + x + '</span>';
-      else if (x < 200)
-        '<span style="color:orange;">' + x + '</span>';
-      else
-        '<span style="color:green;">' + x + '</span>';
-  - attr: last_seen
-    name: Last Seen
-    numeric: true
-    modify: |-
-      (() => {
-        if (!x) return '<span style="color:black;">N/A</span>';
-        const d = new Date(x);
-        const diffMs = Date.now() - d.getTime();
-        const diffMin = diffMs / 60000;
-        const style = diffMin > 10 ? 'color: gray;' : 'color: black;';
-        return `<span style="${style}">${d.toLocaleString()}</span>`;
-      })()
-  - attr: device_type
-    name: Device Type
-  - name: Power source
-    attr: power_source
-  - attr: quirk_class
-    name: Quirk
-    modify: >-
-      '<span style="display:inline-block; max-width: 180px; white-space: nowrap;
-      overflow: hidden; text-overflow: ellipsis;" title="' + x + '">' + x +
-      '</span>';
-  - name: NWK
-    prop: nwk
-  - attr: ieee
-    name: IEEE
-  - attr: parent_name
-    name: Parent
-  - attr: neighbors_names
-    name: Neighbors
-    modify: >-
-      '<span style="display:inline-block; max-width: 180px; white-space: nowrap;
-      overflow: hidden; text-overflow: ellipsis;" title="' + x + '">' + x +
-      '</span>';
-  - attr: routes_names
-    name: Routes
-    modify: >-
-      '<span style="display:inline-block; max-width: 180px; white-space: nowrap;
-      overflow: hidden; text-overflow: ellipsis;" title="' + x + '">' + x +
-      '</span>';
+> Tip: maak altijd een backup van je bestaande `zha-table-card.js` in `www/` voordat je overschrijft.
+
+## Directe installatie (snelle links)
+
+Je kunt het bestand snel downloaden of kopiëren met de volgende voorbeelden. Pas het pad aan wanneer je een andere locatie gebruikt.
+
+- Raw GitHub URL (gebruik deze om direct te linken of in je resource op GitHub raw):
+
+  https://raw.githubusercontent.com/ViperRNMC/zha-table-card/main/dist/zha-table-card.js
+
+- Download met curl (voeg `-L` toe om redirects te volgen):
+
+```bash
+curl -L -o /path/to/www/community/zha-table-card/zha-table-card.js \
+  https://raw.githubusercontent.com/ViperRNMC/zha-table-card/main/dist/zha-table-card.js
 ```
 
-This card supports flexible column configuration, allowing both direct Zigbee attributes and custom formatting via modify.
-In addition to built-in attributes like rssi, lqi, device_type, or nwk, you can now reference any other entity using:
-- hass.states — the full Home Assistant state registry
-- base_entity_id — the Zigbee device’s base entity ID, resolved automatically, deriving from the device's entity that ends with '_lqi'
+- Download met wget:
 
-This makes it possible to display external data like average signal strength, even though these values are not attributes of the ZHA device. For example, if you've created a sensor called sensor.office_plug_lqi_average via the statistics integration, you can render it like this:
-```yaml
-- attr: lqi_avg
-  name: LQI (avg)
-  numeric: true
-  modify: |-
-    const avg = hass.states[base_entity_id + '_lqi_average']?.state;
-    const val = parseFloat(avg);
-    const x = !Number.isNaN(val) ? Math.round(val) : undefined;
-    if (x === undefined || x === null)
-      '<span style="color:black;">N/A</span>';
-    else if (x < 100)
-      '<span style="color:red;">' + x + '</span>';
-    else if (x < 200)
-      '<span style="color:orange;">' + x + '</span>';
-    else
-      '<span style="color:green;">' + x + '</span>';
+```bash
+wget -O /path/to/www/community/zha-table-card/zha-table-card.js \
+  https://raw.githubusercontent.com/ViperRNMC/zha-table-card/main/dist/zha-table-card.js
 ```
 
-This gives you full control over the display and logic of dynamic values tied to your devices.
+- Kopieer lokaal (als je repository op dezelfde machine staat):
 
-***Top-level options***
-
-| Name                 | Type     | Required?     | Description
-| ----                 | ----     | ------------- | -----------
-| clickable            | bool     |   optional    | Activates the devices' on-click popup dialog
-
-## Available attributes:
-
-```
-available
-area_id
-device_reg_id
-ieee
-last_seen
-lqi
-manufacturer
-manufacturer_code
-model
-name
-nwk
-power_source
-device_type
-quirk_applied
-quirk_class
-rssi
-user_given_name
-parent_name
-neighbors_names
-routes_names
+```bash
+cp -v /Users/viper/github/zha-table-card/dist/zha-table-card.js /path/to/www/community/zha-table-card/zha-table-card.js
 ```
 
-## Available Props:
+- Backup-voorbeeld (maak timestamped backup voordat je overschrijft):
 
+```bash
+ts=$(date +%Y%m%d-%H%M%S)
+cp /path/to/www/community/zha-table-card/zha-table-card.js /path/to/www/community/zha-table-card/zha-table-card.js.bak.$ts
 ```
-name
-nwk
+
+Opmerking: vervang `/path/to/www/community/zha-table-card/` door je daadwerkelijke Home Assistant `www` pad, bijvoorbeeld `/volumes/config/www/community/zha-table-card/` of `/Users/viper/hass-dev/config/www/community/zha-table-card/`.
+
+## Configuratie (GUI en YAML)
+
+De kaart exposeert een Lovelace editor (GUI) waarmee je kolommen kunt aan- of uitzetten, herschikken en configureren. YAML is optioneel — je kunt snel via de editor je zichtbare kolommen en opties instellen.
+
+Als je liever handmatig YAML gebruikt, blijft dat natuurlijk mogelijk en de kaart ondersteunt beide werkwijzen.
+
+## Quirk-kolom
+
+De kaart gebruikt één samengevoegde `quirk`-kolom. Mogelijke vormen:
+
+- nieuw: `quirk` kan een object zijn: `{ class, applied }`
+- oud: losse attributen `quirk_class` (naam) en `quirk_applied` (boolean)
+
+We tonen een klein icoon (mdi:bug) met een tooltip die de quirk-naam en status (applied / not applied) toont. Indien beschikbaar wordt naast het icoon ook de quirk-naam getoond in gedempte tekst.
+
+## Debug helper
+
+Roep in de browser-console aan (wanneer `hass` beschikbaar is):
+
+```js
+window.zha_table_card_debug(window.hass || window._zha_card_hass)
 ```
 
-- name - will return user_given_name if it exists or name if it does not
-- nwk - will return the hex display value of the nwk attr
+Dit geeft een kort overzicht van ZHA-devices en mogelijke overeenkomende sensor-entity_ids (handig bij het bepalen van fallbacks).
 
-See https://github.com/custom-cards/flex-table-card for advanced configuration options.
+## Veelgebruikte attributen
+
+De kaart kan direct waarden uit de ZHA device attributes tonen. De meest voorkomende attributen die worden gebruikt of waarvan de kaart fallbacks ondersteunt zijn:
+
+- available
+- area_id
+- device_reg_id (Home Assistant device registry id)
+- ieee (MAC/IEEE address)
+- name
+- user_given_name
+- model
+- manufacturer
+- manufacturer_code
+- nwk (network short address)
+- device_type
+- power_source
+- last_seen
+- rssi (ook gekeken naar rssi_dbm, signal_strength en externe sensors)
+- lqi (en eventuele gemiddelde LQI sensoren via `base_entity_id`)
+- battery (ondersteunt 0–255 → %-conversie; fallback zoekt ook naar sensor.<device>_battery etc.)
+- quirk (samengevoegd object of string; compatibel met `quirk_class` en `quirk_applied`)
+- parent_name
+- neighbors_names
+- routes_names
+
+Opmerking: de kaart kan ook externe sensor-entity states (via `hass.states`) gebruiken voor waarden zoals gemiddelde RSSI/LQI of andere device-gerelateerde sensoren. Gebruik de debug-helper om mogelijke matching entity_ids te vinden.
+
+## Acknowledgements
+
+Deze fork bouwt voort op het originele werk van @dmulcahey en andere bijdragers in de Home Assistant community.
+
