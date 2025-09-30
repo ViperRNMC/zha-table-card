@@ -608,16 +608,8 @@ class ZHAConfigUI {
     return {
       schema: [
         {
-          name: 'visible_columns',
-          type: 'list',
-          description: 'Drag to reorder visible columns. Use the content.columns multi-select for quick additions.',
-          schema: [
-            { name: 'prop', required: true, selector: { select: { options: presetOptions } }, description: 'Pick a column to show' }
-          ]
-        },
-        {
           name: "content",
-          type: "expandable",
+          type: "expandable", 
           icon: "mdi:text-short",
           schema: [
             {
@@ -631,17 +623,7 @@ class ZHAConfigUI {
                 { name: 'show_icon', required: false, selector: { boolean: {} }, description: 'Show header icon', default: true }
               ]
             },
-            {
-              name: 'visible_columns',
-              type: 'list',
-              schema: [
-                { name: 'name', required: true, selector: { text: {} }, description: 'Column header text' },
-                { name: 'prop', required: false, selector: { text: {} }, description: 'Property name (e.g. object_id, nwk, model)' },
-                { name: 'attr', required: false, selector: { text: {} }, description: 'Attribute name (optional)' },
-                { name: 'hidden', required: false, selector: { boolean: {} }, description: 'Hide this column' }
-              ],
-            },
-            { name: 'columns', selector: { select: { multiple: true, options: presetOptions } } },
+            { name: 'columns', selector: { select: { multiple: true, options: presetOptions, reorder: true } } },
           ]
         },
         {
