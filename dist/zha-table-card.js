@@ -39,13 +39,11 @@ const PRESET_COLUMNS = [
   { name: 'Battery', attr: 'battery', numeric: true, align: 'center', modify: "(()=>{ if (x===undefined||x===null||x==='') return ''; const n=Number(x); if (Number.isNaN(n)) return x; return (n>100?Math.round(n*100/255):n) + '%'; })()" }
 ];
 
-/** some helper functions, mmmh, am I the only one needing those? Am I doing something wrong? */
+/** Helper functions */
 // typical [[1,2,3], [6,7,8]] to [[1, 6], [2, 7], [3, 8]] converter
-var transpose = (m) => m[0].map((x, i) => m.map((x) => x[i]));
+const transpose = (m) => m[0].map((x, i) => m.map((x) => x[i]));
 
-// (removed unused `listify` helper)
-    
-var compare = function (a, b) {
+const compare = function (a, b) {
   const aNum = parseFloat(a);
   const bNum = parseFloat(b);
 
@@ -67,7 +65,7 @@ var compare = function (a, b) {
 function normalizeColor(color) {
   if (!color && color !== 0) return null;
   // Map common material color names to hex for nicer defaults (e.g. 'indigo' -> material indigo)
-  const MATERIAL_COLORS = {
+  const MATERIAL_COLORS = Object.freeze({
     indigo: '#3f51b5',
     blue: '#2196f3',
     red: '#f44336',
@@ -85,22 +83,34 @@ function normalizeColor(color) {
     cyan: '#00bcd4',
     lime: '#cddc39',
     yellow: '#ffeb3b'
-  };
+  });
   // If it's already a string, map known names to hex otherwise return as-is
   if (typeof color === 'string') {
     const key = color.trim().toLowerCase();
     if (MATERIAL_COLORS[key]) return MATERIAL_COLORS[key];
     return color;
   }
-  // If it's an object like { r: 255, g: 0, b: 0 } or { red:.. }
+  // If it's an object like { r: 255, g: 0, b: 0 } or { red:.. } or ui_color selector format
   if (typeof color === 'object') {
+    // Handle array format [r, g, b]
     if (Array.isArray(color) && color.length >= 3) {
       return `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
     }
+    // Handle RGB object formats
     const r = color.r ?? color.red ?? color[0];
     const g = color.g ?? color.green ?? color[1];
     const b = color.b ?? color.blue ?? color[2];
     if ([r,g,b].every((v) => typeof v === 'number')) return `rgb(${r}, ${g}, ${b})`;
+    
+    // Handle ui_color selector formats
+    if (color.rgb_color && Array.isArray(color.rgb_color)) {
+      return `rgb(${color.rgb_color[0]}, ${color.rgb_color[1]}, ${color.rgb_color[2]})`;
+    }
+    if (color.hs_color && Array.isArray(color.hs_color)) {
+      const [h, s] = color.hs_color;
+      return `hsl(${h}, ${s}%, 50%)`;
+    }
+    if (typeof color.hex === 'string') return color.hex;
     if (typeof color.value === 'string') return color.value;
     if (typeof color.color === 'string') return color.color;
   }
@@ -548,12 +558,8 @@ class DataRowZHA {
             const fn = new Function('x', 'hass', 'device', `return (${cfg.modify});`);
             content = fn(x, _hass, this.device);
           } catch (err) {
-            try {
-              content = eval(cfg.modify);
-            } catch (err2) {
-              console.warn('modify evaluation failed', err, err2);
-              content = x ?? '';
-            }
+            // Silently fall back to raw value on modification error
+            content = x ?? '';
           }
         } else {
           // Default: render empty string for missing values (avoid 'N/A')
@@ -618,7 +624,7 @@ class ZHAConfigUI {
               schema: [
                 { name: 'title', required: false, selector: { text: {} } },
                 { name: 'title_icon', required: false, selector: { icon: { placeholder: 'mdi:zigbee' } }},
-                { name: 'header_color', required: false, selector: { ui_color: { default_color: 'state', include_state: true } } },
+                { name: 'header_color', required: false, selector: { ui_color: { default_color: 'primary' } } },
                 { name: 'show_title', required: false, selector: { boolean: {} }, description: 'Show card title', default: true },
                 { name: 'show_icon', required: false, selector: { boolean: {} }, description: 'Show header icon', default: true }
               ]
@@ -773,15 +779,27 @@ class ZHAConfigUI {
 
     // Normalize color shapes returned by ui_color selector
     if (cfg.color && typeof cfg.color === 'object') {
+      // Handle various ui_color selector return formats
       if (typeof cfg.color.color === 'string' && cfg.color.color) cfg.color = cfg.color.color;
       else if (typeof cfg.color.value === 'string' && cfg.color.value) cfg.color = cfg.color.value;
       else if (typeof cfg.color.theme === 'string' && cfg.color.theme) cfg.color = cfg.color.theme;
+      else if (typeof cfg.color.rgb_color === 'object' && cfg.color.rgb_color) {
+        const rgb = cfg.color.rgb_color;
+        cfg.color = `rgb(${rgb[0] || rgb.r || 0}, ${rgb[1] || rgb.g || 0}, ${rgb[2] || rgb.b || 0})`;
+      }
+      else if (typeof cfg.color.hex === 'string' && cfg.color.hex) cfg.color = cfg.color.hex;
+      else if (typeof cfg.color.hs_color === 'object' && cfg.color.hs_color) {
+        // Convert HS to hex approximation
+        const [h, s] = cfg.color.hs_color;
+        cfg.color = `hsl(${h || 0}, ${s || 0}%, 50%)`;
+      }
       else {
         try {
           const norm = normalizeColor(cfg.color);
           if (norm) cfg.color = norm;
           else if (cfg.color.css && typeof cfg.color.css === 'string') cfg.color = cfg.color.css;
           else if (cfg.color.var && typeof cfg.color.var === 'string') cfg.color = cfg.color.var;
+          else if (cfg.color.state && typeof cfg.color.state === 'string') cfg.color = cfg.color.state;
           else cfg.color = JSON.stringify(cfg.color);
         } catch (e) {
           cfg.color = String(cfg.color);
@@ -799,6 +817,22 @@ class ZHATableCard extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this.card_height = 1;
     this.tbl = null;
+    this._eventListeners = new Map();
+  }
+
+  _cleanupEventListeners() {
+    // Remove all tracked event listeners
+    this._eventListeners.forEach((listener, element) => {
+      if (element && element.removeEventListener) {
+        element.removeEventListener(listener.event, listener.handler);
+      }
+    });
+    this._eventListeners.clear();
+  }
+
+  _addEventListenerTracked(element, event, handler) {
+    element.addEventListener(event, handler);
+    this._eventListeners.set(element, { event, handler });
   }
 
   static getConfigForm() {
@@ -808,152 +842,13 @@ class ZHATableCard extends HTMLElement {
 
   setConfig(config) {
     const root = this.shadowRoot;
-    if (root && root.lastChild) root.removeChild(root.lastChild);
-    // Normalize config shapes via ZHAConfigUI helper
+    if (root && root.lastChild) {
+      this._cleanupEventListeners();
+      root.removeChild(root.lastChild);
+    }
+    // Normalize config shapes via ZHAConfigUI helper (all normalization is handled there)
     const cfg = ZHAConfigUI.normalizeConfig(config);
-    // Support expandable-grouped editors: some frontends place grouped fields under
-    // `content` or `interactions` keys (when using a custom expandable UI). Merge
-    // those nested grids into the top-level config so the card reacts to changes.
-    try {
-      if (cfg.content && typeof cfg.content === 'object') {
-        const c = cfg.content;
-        if (c.header_grid && typeof c.header_grid === 'object') {
-          const hg = c.header_grid;
-          if (hg.title !== undefined) cfg.title = hg.title;
-          if (hg.title_icon !== undefined) cfg.title_icon = hg.title_icon;
-          if (hg.color !== undefined) cfg.color = hg.color;
-          if (hg.show_title !== undefined) cfg.show_title = hg.show_title;
-          if (hg.show_icon !== undefined) cfg.show_icon = hg.show_icon;
-        }
-      }
-      if (cfg.interactions && typeof cfg.interactions === 'object') {
-        const it = cfg.interactions;
-        if (it.features_grid && typeof it.features_grid === 'object') {
-          const fg = it.features_grid;
-          if (fg.sorting !== undefined) cfg.sorting = fg.sorting;
-          if (fg.csv_export !== undefined) cfg.csv_export = fg.csv_export;
-          if (fg.filters !== undefined) cfg.filters = fg.filters;
-          if (fg.search !== undefined) cfg.search = fg.search;
-        }
-      }
-    } catch (e) {
-      // defensive: if something unexpected is present, don't block setConfig
-      console.warn('Failed to merge expandable groups into config', e);
-    }
-    // Support nested header_grid (from the editor/grid) by merging into top-level keys.
-    // Some frontends may return grouped fields either directly under `header_grid`
-    // or nested inside an `content.header_grid` (when using an expandable group).
-    if (cfg && typeof cfg === 'object') {
-      try {
-        const maybeHG = cfg.header_grid || (cfg.content && cfg.content.header_grid);
-        if (maybeHG && typeof maybeHG === 'object') {
-          const hg = maybeHG;
-          if (hg.title !== undefined) cfg.title = hg.title;
-          if (hg.title_icon !== undefined) cfg.title_icon = hg.title_icon;
-          if (hg.header_color !== undefined) cfg.color = hg.header_color; // named header_color in form
-          if (hg.color !== undefined) cfg.color = hg.color; // older shape
-          if (hg.show_title !== undefined) cfg.show_title = hg.show_title;
-          if (hg.show_icon !== undefined) cfg.show_icon = hg.show_icon;
-        }
 
-        // Map preset keys (prop|attr|name) to the full preset object for robust lookups
-  const presetMap = PRESET_COLUMNS.reduce((acc, c) => { const key = c.prop || c.attr || c.name; acc[key] = c; return acc; }, {});
-        // If editor nests columns under cfg.content.columns (expandable group), merge them up
-        if (cfg.content && Array.isArray(cfg.content.columns)) {
-          // Convert string values (from multi-select) into proper column objects
-          cfg.columns = cfg.content.columns.map((c) => {
-            if (typeof c === 'string') {
-              const preset = presetMap[c];
-              if (preset) return Object.assign({}, preset);
-              return { prop: c, name: c };
-            }
-            if (c && typeof c === 'object') {
-              return Object.assign({}, c);
-            }
-            return { prop: String(c), name: String(c) };
-          });
-        }
-
-        // Also accept a top-level `columns` array that may be a list of strings (short syntax)
-        if (Array.isArray(cfg.columns) && cfg.columns.length && typeof cfg.columns[0] === 'string') {
-          cfg.columns = cfg.columns.map((c) => {
-            if (typeof c === 'string') {
-              const preset = presetMap[c];
-              if (preset) return Object.assign({}, preset);
-              return { prop: c, name: c };
-            }
-            return Object.assign({}, c);
-          });
-        }
-
-        // If editor provided visible_columns as a list (either top-level or under content),
-        // make that list the source of truth for ordering and visibility.
-        const providedVisible = Array.isArray(cfg.visible_columns)
-          ? cfg.visible_columns
-          : Array.isArray(cfg.content && cfg.content.visible_columns)
-          ? cfg.content.visible_columns
-          : null;
-
-        if (Array.isArray(providedVisible)) {
-          const visibleKeys = providedVisible.map((item) => {
-            if (typeof item === 'string') return item;
-            if (item && typeof item === 'object') return item.prop || item.attr || item.name || JSON.stringify(item);
-            return String(item);
-          }).map(String);
-
-          // Ensure we have columns to reorder; if not, seed from presets
-          if (!Array.isArray(cfg.columns) || !cfg.columns.length) {
-            cfg.columns = PRESET_COLUMNS.map(c => Object.assign({}, c));
-          }
-
-          // Build a map of existing columns by key (prop/attr/name)
-          const colMap = new Map();
-          cfg.columns.forEach((col) => {
-            const key = String(col.prop || col.attr || col.name || JSON.stringify(col));
-            colMap.set(key, Object.assign({}, col));
-          });
-
-          const ordered = [];
-          // Add visible columns in requested order (use presetMap name when name missing)
-          visibleKeys.forEach((k) => {
-            if (colMap.has(k)) {
-              const c = colMap.get(k);
-              c.hidden = false;
-              ordered.push(c);
-              colMap.delete(k);
-            } else {
-              // create a minimal column object if missing
-              ordered.push({ prop: k, name: presetMap[k] || k, hidden: false });
-            }
-          });
-
-          // Append remaining columns (preserve existing order), mark them hidden
-          for (const [key, col] of colMap.entries()) {
-            col.hidden = true;
-            ordered.push(col);
-          }
-
-          cfg.columns = ordered;
-          cfg.visible_columns = visibleKeys; // keep a flat visible array for backward compat
-        }
-      } catch (e) {
-        // defensive: if something unexpected is present, don't block setConfig
-        console.warn('Failed to merge nested editor groups into config', e);
-      }
-    }
-    
-    // sensible defaults when not provided
-    if (cfg.title === undefined) cfg.title = "Table";
-    if (cfg.title_icon === undefined) cfg.title_icon = "mdi:zigbee";
-    if (cfg.filters === undefined) cfg.filters = true;
-    if (cfg.search === undefined) cfg.search = true;
-    if (cfg.csv_export === undefined) cfg.csv_export = true;
-    if (cfg.clickable === undefined) cfg.clickable = true;
-    if (cfg.offline_first === undefined) cfg.offline_first = true;
-
-
-    // Normalize color object returned by ui_color selector (some frontends return an object)
-    // color normalization handled in ZHAConfigUI.normalizeConfig already
       const card = document.createElement("ha-card");
       // Show icon and/or title based on config
       let showTitle = cfg.show_title !== false;
@@ -1060,16 +955,41 @@ class ZHATableCard extends HTMLElement {
         </div>
       `;
     
-      // determine header color based on config
+      // determine header color based on config  
       let headerColor = '#03a9f4';
       if (cfg.color) {
-        // allow the editor to return named palette keywords. normalizeColor will
-        // translate common names to hex and pass-through css variables.
-        if (cfg.color === 'Accent color') headerColor = 'var(--accent-color, var(--primary-color))';
-        else if (cfg.color === 'Primary color' || cfg.color === 'State color (default)') headerColor = 'var(--primary-color)';
-        else if (cfg.color === 'Background color') headerColor = 'var(--primary-background-color, var(--paper-card-background-color))';
-        else if (cfg.color === 'Primary text color') headerColor = 'var(--primary-text-color, var(--text-primary-color))';
-        else if (cfg.color === 'None') headerColor = 'transparent';
+        // Debug: log color value to help troubleshoot ui_color issues
+        if (typeof cfg.color === 'object') {
+          console.log('ZHA Table Card: Received color object:', cfg.color);
+        }
+        // Handle named color palette keywords and normalize values
+        if (cfg.color === 'state' || cfg.color === 'State color (default)') headerColor = 'var(--state-icon-color, var(--primary-color))';
+        else if (cfg.color === 'primary' || cfg.color === 'Primary color') headerColor = 'var(--primary-color)';
+        else if (cfg.color === 'accent' || cfg.color === 'Accent color') headerColor = 'var(--accent-color, var(--primary-color))';
+        else if (cfg.color === 'disabled' || cfg.color === 'Disabled color') headerColor = 'var(--disabled-text-color)';
+        else if (cfg.color === 'red' || cfg.color === 'Red') headerColor = 'var(--red-color, #f44336)';
+        else if (cfg.color === 'pink' || cfg.color === 'Pink') headerColor = 'var(--pink-color, #e91e63)';
+        else if (cfg.color === 'purple' || cfg.color === 'Purple') headerColor = 'var(--purple-color, #9c27b0)';
+        else if (cfg.color === 'deep-purple' || cfg.color === 'Deep Purple') headerColor = 'var(--deep-purple-color, #673ab7)';
+        else if (cfg.color === 'indigo' || cfg.color === 'Indigo') headerColor = 'var(--indigo-color, #3f51b5)';
+        else if (cfg.color === 'blue' || cfg.color === 'Blue') headerColor = 'var(--blue-color, #2196f3)';
+        else if (cfg.color === 'light-blue' || cfg.color === 'Light Blue') headerColor = 'var(--light-blue-color, #03a9f4)';
+        else if (cfg.color === 'cyan' || cfg.color === 'Cyan') headerColor = 'var(--cyan-color, #00bcd4)';
+        else if (cfg.color === 'teal' || cfg.color === 'Teal') headerColor = 'var(--teal-color, #009688)';
+        else if (cfg.color === 'green' || cfg.color === 'Green') headerColor = 'var(--green-color, #4caf50)';
+        else if (cfg.color === 'light-green' || cfg.color === 'Light Green') headerColor = 'var(--light-green-color, #8bc34a)';
+        else if (cfg.color === 'lime' || cfg.color === 'Lime') headerColor = 'var(--lime-color, #cddc39)';
+        else if (cfg.color === 'yellow' || cfg.color === 'Yellow') headerColor = 'var(--yellow-color, #ffeb3b)';
+        else if (cfg.color === 'amber' || cfg.color === 'Amber') headerColor = 'var(--amber-color, #ffc107)';
+        else if (cfg.color === 'orange' || cfg.color === 'Orange') headerColor = 'var(--orange-color, #ff9800)';
+        else if (cfg.color === 'deep-orange' || cfg.color === 'Deep Orange') headerColor = 'var(--deep-orange-color, #ff5722)';
+        else if (cfg.color === 'brown' || cfg.color === 'Brown') headerColor = 'var(--brown-color, #795548)';
+        else if (cfg.color === 'grey' || cfg.color === 'gray' || cfg.color === 'Grey' || cfg.color === 'Gray') headerColor = 'var(--grey-color, #9e9e9e)';
+        else if (cfg.color === 'blue-grey' || cfg.color === 'Blue Grey') headerColor = 'var(--blue-grey-color, #607d8b)';
+        else if (cfg.color === 'black' || cfg.color === 'Black') headerColor = 'var(--google-black, #000000)';
+        else if (cfg.color === 'white' || cfg.color === 'White') headerColor = 'var(--google-white, #ffffff)';
+        else if (cfg.color === 'none' || cfg.color === 'None' || cfg.color === 'transparent') headerColor = 'transparent';
+        else if (cfg.color === 'auto' || cfg.color === 'Auto') headerColor = 'var(--ha-card-header-color, var(--primary-text-color))';
         else {
           const norm = normalizeColor(cfg.color);
           headerColor = norm || cfg.color;
@@ -1126,7 +1046,7 @@ class ZHATableCard extends HTMLElement {
       // Add sorting listeners to header elements (use data-idx to reference original column index)
       const headers = root.querySelectorAll('th');
       headers.forEach((header) => {
-        header.onclick = () => {
+        const clickHandler = () => {
           try {
             // respect global sorting enabled flag
             if (cfg.sorting === false) return;
@@ -1154,6 +1074,7 @@ class ZHATableCard extends HTMLElement {
             console.error('Header click failed', err);
           }
         };
+        this._addEventListenerTracked(header, 'click', clickHandler);
       });
     }
 
@@ -1181,8 +1102,8 @@ class ZHATableCard extends HTMLElement {
       );
       const root = this.shadowRoot;
       // bind click()-handler to row (if configured)
-      elem.onclick = this.tbl.cfg.clickable
-        ? function (clk_ev) {
+      if (this.tbl.cfg.clickable) {
+        const clickHandler = function (clk_ev) {
             let ev = new Event("location-changed", {
               bubbles: true,
               cancelable: false,
@@ -1195,8 +1116,9 @@ class ZHATableCard extends HTMLElement {
               "/config/devices/device/" + row.device.attributes.device_reg_id
             );
             root.dispatchEvent(ev);
-          }
-        : null;
+          };
+        this._addEventListenerTracked(elem, 'click', clickHandler);
+      }
     });
   }
 
@@ -1391,16 +1313,18 @@ class ZHATableCard extends HTMLElement {
           const el = root.getElementById(id);
           if (!el) return;
     
-          el.addEventListener("change", () => {
+          const changeHandler = () => {
             this.applyFilters();
             this._saveFilterState();
-          });
+          };
+          this._addEventListenerTracked(el, "change", changeHandler);
     
           if (id === "filter-name") {
-            el.addEventListener("input", () => {
+            const inputHandler = () => {
               this.applyFilters();
               this._saveFilterState();
-            });
+            };
+            this._addEventListenerTracked(el, "input", inputHandler);
           }
         });
     
@@ -1438,7 +1362,7 @@ class ZHATableCard extends HTMLElement {
         // NOTE: this should clear the select-type filters but keep the text search intact
         const clearButton = root.getElementById("clear-filters");
         if (clearButton) {
-          clearButton.addEventListener("click", () => {
+          const clearHandler = () => {
             // clear only the dropdown/select filters; keep the search input (filter-name) as-is
             ["filter-area", "filter-model", "filter-type", "filter-online"].forEach((id) => {
               const el = root.getElementById(id);
@@ -1450,13 +1374,14 @@ class ZHATableCard extends HTMLElement {
             // Persist the updated filters (preserving any search text) instead of removing saved state
             this._saveFilterState();
             this.applyFilters();
-          });
+          };
+          this._addEventListenerTracked(clearButton, "click", clearHandler);
         }
         
         // Clear "name" text input (× button)
         const clearNameBtn = root.getElementById("clear-name");
         if (clearNameBtn) {
-          clearNameBtn.addEventListener("click", () => {
+          const clearNameHandler = () => {
             const nameInput = root.getElementById("filter-name");
             if (nameInput) {
               nameInput.value = "";
@@ -1464,13 +1389,14 @@ class ZHATableCard extends HTMLElement {
               this._saveFilterState();
               this.applyFilters();
             }
-          });
+          };
+          this._addEventListenerTracked(clearNameBtn, "click", clearNameHandler);
         }
         
         // Handle CSV export (only when enabled)
         const exportBtn = root.getElementById("export-csv");
         if (exportBtn) {
-          exportBtn.onclick = () => {
+          const exportHandler = () => {
             if (cfg.csv_export === false) return;
             const rows = this.tbl.get_rows();
             if (!rows.length) return;
@@ -1500,6 +1426,7 @@ class ZHATableCard extends HTMLElement {
             a.click();
             URL.revokeObjectURL(url);
           };
+          this._addEventListenerTracked(exportBtn, "click", exportHandler);
         }
       });
     }
@@ -1510,6 +1437,11 @@ class ZHATableCard extends HTMLElement {
 
   getCardSize() {
     return this.card_height;
+  }
+
+  disconnectedCallback() {
+    // Cleanup when element is removed from DOM
+    this._cleanupEventListeners();
   }
 }
 
@@ -1535,7 +1467,7 @@ window.zha_table_card_debug = async function(hass) {
   try {
     const devices = await hass.callWS({ type: 'zha/devices' });
     console.group('ZHA Table Card Debug - devices: ' + devices.length);
-    for (const d of devices.slice(0, 50)) {
+    for (const d of devices.slice(0, 25)) {
       console.groupCollapsed(`device: ${d.attributes?.name || d.name || d.device_reg_id || '(no name)'} (${d.attributes?.device_reg_id || d.device_reg_id || 'no-id'})`);
       console.log('attributes keys:', Object.keys(d.attributes || {}).sort());
       const idPieces = [];
