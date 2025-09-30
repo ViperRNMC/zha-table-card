@@ -1,3 +1,6 @@
+[![Version](https://img.shields.io/badge/version-2025.9.1-blue.svg)](https://github.com/ViperRNMC/zha-table-card/releases)
+[![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+
 # ZHA Table Card
 
 Een gebruiksvriendelijke tabelweergave voor ZHA (Zigbee Home Assistant) apparaten. Deze fork breidt de originele `zha-network-card` en `zha-network-card-ext`uit met extra functies voor overzicht en beheer van  Zigbee-netwerken.
